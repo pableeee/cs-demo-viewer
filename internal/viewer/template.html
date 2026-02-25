@@ -13,7 +13,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #main{flex:1;display:flex;overflow:hidden}
 #canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
-#killfeed{position:absolute;top:10px;right:10px;width:260px;pointer-events:none;display:flex;flex-direction:column;gap:4px}
+#killfeed{position:absolute;top:10px;right:10px;width:260px;pointer-events:none;display:flex;flex-direction:column;gap:4px;max-height:calc(100% - 20px);overflow-y:hidden}
 .kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px}
 .kf-row1{display:flex;align-items:center;gap:6px}
 .kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
@@ -24,6 +24,7 @@ canvas{display:block;cursor:crosshair}
 .kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
 .kf-time{color:#6e7681;font-size:10px;margin-left:auto}
 .kf-nade{border-left-color:#7ee787}
+.kf-hit{border-left-color:#555}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -61,6 +62,10 @@ canvas{display:block;cursor:crosshair}
   <div style="margin-left:auto;display:flex;align-items:center;gap:14px">
     <div id="alive-ctr" style="font-size:13px;font-weight:600;letter-spacing:.03em">
       <span id="ct-alive" style="color:#4fc3f7">5</span><span style="color:#555">v</span><span id="t-alive" style="color:#ff9800">5</span>
+    </div>
+    <div id="timers" style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">
+      <div id="round-timer" style="font-size:17px;font-weight:700;color:#e6edf3;letter-spacing:.04em;font-variant-numeric:tabular-nums;line-height:1">1:55</div>
+      <div id="c4-timer" style="font-size:12px;font-weight:700;color:#ffd700;letter-spacing:.04em;font-variant-numeric:tabular-nums;display:none">C4 0:40.0</div>
     </div>
     <button id="stats-btn" onclick="toggleStats()"
       style="background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 11px;border-radius:4px;cursor:pointer;font-size:12px">
@@ -137,12 +142,15 @@ const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_DMG=
 // BombAction array: [tick, action, x, y, site]
 const BA_TICK=0, BA_ACT=1, BA_X=2, BA_Y=3, BA_SITE=4;
 
-// Grenade array: [startTick, endTick, type, x, y]
-const GR_ST=0, GR_ET=1, GR_TYPE=2, GR_X=3, GR_Y=4;
+// Grenade array: [startTick, endTick, type, x, y, throwerIdx]
+const GR_ST=0, GR_ET=1, GR_TYPE=2, GR_X=3, GR_Y=4, GR_THROWER=5;
 const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3, GT_SMOKE_CT=4, GT_SMOKE_T=5;
 
 // Shot array: [tick, playerIdx]
 const SH_TICK=0, SH_PIDX=1;
+
+// HitEvent array: [tick, atkIdx, vicIdx, dmg, weapon]
+const HI_TICK=0, HI_ATK=1, HI_VIC=2, HI_DMG=3, HI_WEP=4;
 
 // GrenadeTrail array: [startTick, endTick, type, [[tickOffset,x,y],...]]
 const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_PTS=3;
@@ -249,6 +257,28 @@ function clampPan() {
   panY = Math.max(-maxPan, Math.min(maxPan, panY));
 }
 
+// ── Grenade in-flight position ────────────────────────────────────────────────
+function interpTrailPos(tr, tick) {
+  const pts = tr[TR_PTS];
+  if (!pts || pts.length === 0) return null;
+  const elapsed = tick - tr[TR_ST];
+  if (elapsed < 0) return null;
+  if (pts.length === 1 || elapsed <= pts[0][TR_PT_T])
+    return [pts[0][TR_PT_X], pts[0][TR_PT_Y]];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const t0 = pts[i][TR_PT_T], t1 = pts[i+1][TR_PT_T];
+    if (elapsed >= t0 && elapsed <= t1) {
+      const frac = t1 > t0 ? (elapsed - t0) / (t1 - t0) : 0;
+      return [
+        lerp(pts[i][TR_PT_X], pts[i+1][TR_PT_X], frac),
+        lerp(pts[i][TR_PT_Y], pts[i+1][TR_PT_Y], frac),
+      ];
+    }
+  }
+  const last = pts[pts.length - 1];
+  return [last[TR_PT_X], last[TR_PT_Y]];
+}
+
 // ── Interpolation ─────────────────────────────────────────────────────────────
 function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -324,30 +354,22 @@ function render() {
 
   // ── Grenade throw arcs ──────────────────────────────────────────────────────
   for (const tr of (round.trails || [])) {
-    const fadeTick = tr[TR_ET] + TRAIL_FADE_TICKS;
-    if (tick < tr[TR_ST] || tick > fadeTick) continue;
+    // Only show while the grenade is in flight; disappears on landing.
+    if (tick < tr[TR_ST] || tick >= tr[TR_ET]) continue;
     const pts = tr[TR_PTS];
     if (!pts || pts.length < 2) continue;
 
-    const inFlight = tick <= tr[TR_ET];
-    const elapsed  = tick - tr[TR_ST];
-
-    // Determine last visible point index
-    let lastIdx = pts.length - 1;
-    if (inFlight) {
-      lastIdx = -1;
-      for (let i = 0; i < pts.length; i++) {
-        if (pts[i][TR_PT_T] <= elapsed) lastIdx = i; else break;
-      }
-      if (lastIdx < 0) continue;
+    // Show only points that have been reached at the current tick.
+    const elapsed = tick - tr[TR_ST];
+    let lastIdx = -1;
+    for (let i = 0; i < pts.length; i++) {
+      if (pts[i][TR_PT_T] <= elapsed) lastIdx = i; else break;
     }
-
-    const fadeAlpha = inFlight ? 0.85 : 0.85 * (1 - (tick - tr[TR_ET]) / TRAIL_FADE_TICKS);
-    if (fadeAlpha <= 0.01) continue;
+    if (lastIdx < 0) continue;
 
     const trailColor = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,1)';
     ctx.save();
-    ctx.globalAlpha = fadeAlpha;
+    ctx.globalAlpha = 0.85;
     ctx.setLineDash([Math.max(2, sc * 3), Math.max(1.5, sc * 2)]);
     ctx.lineWidth   = Math.max(1.2, sc * 2);
     ctx.strokeStyle = trailColor;
@@ -358,6 +380,35 @@ function render() {
       const [px, py] = w2c(pts[i][TR_PT_X], pts[i][TR_PT_Y]);
       ctx.lineTo(px, py);
     }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── In-flight grenade projectiles ───────────────────────────────────────────
+  for (const tr of (round.trails || [])) {
+    if (tick < tr[TR_ST] || tick >= tr[TR_ET]) continue;
+    const pos = interpTrailPos(tr, tick);
+    if (!pos) continue;
+    const [gx, gy] = w2c(pos[0], pos[1]);
+    const color = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,1)';
+    const pr = Math.max(4, Math.round(5 * sc));
+    const pulse = 0.5 + 0.5 * Math.sin(tick / 4 * Math.PI);
+    ctx.save();
+    // Pulsing ring
+    ctx.globalAlpha = pulse * 0.7;
+    ctx.beginPath();
+    ctx.arc(gx, gy, pr * (1.6 + 0.6 * pulse), 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.5, sc * 1.5);
+    ctx.stroke();
+    // Solid core dot
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(gx, gy, pr, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = Math.max(1, sc);
     ctx.stroke();
     ctx.restore();
   }
@@ -447,11 +498,8 @@ function render() {
     const act = lastBomb[BA_ACT];
     // color by state
     const bombColors = ['#ffd700','#ffd700','#4fc3f7','#2ea043','#f85149','#e6a817','#888'];
-    const bombBlink  = [true,    false,    true,     false,    false,    true,     false];
     const bombColor  = bombColors[act] || '#ffd700';
-    const blink      = bombBlink[act];
-    const bombVis    = !blink || Math.floor(tick / BOMB_FLASH_PERIOD) % 2 === 0;
-    if (bombVis) {
+    {
       const [bx, by] = w2c(lastBomb[BA_X], lastBomb[BA_Y]);
       const br = Math.max(5, Math.round(7 * sc));
       ctx.beginPath();
@@ -595,8 +643,42 @@ function render() {
   document.getElementById('ct-alive').textContent = ctAlive;
   document.getElementById('t-alive').textContent  = tAlive;
 
+  // ── Round timer ───────────────────────────────────────────────────────────
+  const rtEl = document.getElementById('round-timer');
+  if (round.fe && tick >= round.fe) {
+    const elapsed = Math.floor((tick - round.fe) / 64);
+    const rem = Math.max(0, 115 - elapsed);
+    rtEl.textContent = Math.floor(rem / 60) + ':' + String(rem % 60).padStart(2, '0');
+  } else {
+    rtEl.textContent = '1:55';
+  }
+
+  // ── C4 timer ──────────────────────────────────────────────────────────────
+  const c4El = document.getElementById('c4-timer');
+  if (lastBomb && (lastBomb[BA_ACT] === 1 || lastBomb[BA_ACT] === 2)) {
+    const remTicks = Math.max(0, lastBomb[BA_TICK] + 2560 - tick);
+    const remSecs  = remTicks / 64;
+    let timeStr;
+    if (remSecs < 10) {
+      timeStr = remSecs.toFixed(1);
+    } else {
+      timeStr = Math.floor(remSecs / 60) + ':' + String(Math.floor(remSecs % 60)).padStart(2, '0');
+    }
+    c4El.textContent = 'C4 ' + timeStr;
+    c4El.style.display = '';
+    if (lastBomb[BA_ACT] === 2) {
+      c4El.style.color = '#4fc3f7'; // defusing — blue
+    } else if (remTicks < 320) {
+      c4El.style.color = '#f85149'; // < 5 s — red
+    } else {
+      c4El.style.color = '#ffd700'; // yellow
+    }
+  } else {
+    c4El.style.display = 'none';
+  }
+
   updateKillFeed(round, tick);
-  document.getElementById('tick-lbl').textContent = 'tick ' + tick;
+  document.getElementById('tick-lbl').textContent = rtEl.textContent;
   const prog = round.frames.length > 1 ? framePos / (round.frames.length - 1) : 0;
   document.getElementById('timeline').value = Math.round(prog * 1000);
 }
@@ -612,12 +694,14 @@ function updateKillFeed(round, tick) {
   const bombEvts = (round.bomb || []).filter(ba => ba[BA_TICK] <= tick &&
     ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5); // skip plant_begin(0) and pickup(6)
   const nadeEvts = (round.grenades || []).filter(g => g[GR_ST] <= tick);
+  const hitEvts  = (round.hits || []).filter(h => h[HI_TICK] <= tick);
 
   const merged = [
     ...kills.map(k    => ({ t: k[K_TICK],   type: 'kill', data: k  })),
     ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
     ...nadeEvts.map(g  => ({ t: g[GR_ST],   type: 'nade', data: g  })),
-  ].sort((a, b) => a.t - b.t).slice(-KILL_FEED_MAX);
+    ...hitEvts.map(h  => ({ t: h[HI_TICK],  type: 'hit',  data: h  })),
+  ].sort((a, b) => a.t - b.t);
 
   const sig = merged.map(e => e.t + e.type).join(',');
   const feed = document.getElementById('killfeed');
@@ -639,11 +723,26 @@ function updateKillFeed(round, tick) {
       } else if (entry.type === 'nade') {
         const g = entry.data;
         const label = GREN_FEED_LABELS[g[GR_TYPE]] || 'Nade';
+        const throwerName = g[GR_THROWER] >= 0 ? (DEMO.players[g[GR_THROWER]] || {}).name : null;
         el.className = 'kf-entry kf-nade';
         el.innerHTML =
           `<div class="kf-row1">` +
-          `<span class="kf-name-atk">${esc(label)}</span>` +
+          (throwerName ? `<span class="kf-name-atk">${esc(throwerName)}</span>` : '') +
+          `<span class="kf-weapon">${esc(label)}</span>` +
           `<span class="kf-time">${roundTimeFmt(round, g[GR_ST])}</span>` +
+          `</div>`;
+      } else if (entry.type === 'hit') {
+        const h = entry.data;
+        const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
+        const vicName = (DEMO.players[h[HI_VIC]] || {}).name || '?';
+        el.className = 'kf-entry kf-hit';
+        el.innerHTML =
+          `<div class="kf-row1">` +
+          `<span class="kf-name-atk">${esc(atkName)}</span>` +
+          `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
+          `<span class="kf-name-vic">${esc(vicName)}</span>` +
+          `<span class="kf-dmg">${h[HI_DMG]}</span>` +
+          `<span class="kf-time">${roundTimeFmt(round, h[HI_TICK])}</span>` +
           `</div>`;
       } else {
         const k = entry.data;

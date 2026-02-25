@@ -52,7 +52,8 @@ type Round struct {
 	Bomb      []BombAction `json:"bomb"`
 	Grenades  []Grenade    `json:"grenades"`
 	Shots     []Shot         `json:"shots"`
-	Dmg       [][2]int       `json:"dmg,omitempty"`   // per-player damage: [playerIdx, healthDamage]
+	Dmg       [][2]int       `json:"dmg,omitempty"`    // per-player damage: [playerIdx, healthDamage]
+	Hits      []HitEvent     `json:"hits,omitempty"`   // per-hit damage events for the feed
 	Trails    []GrenadeTrail `json:"trails,omitempty"` // grenade throw arcs
 }
 
@@ -117,18 +118,20 @@ func (b BombAction) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]any{b.Tick, b.Action, b.X, b.Y, b.Site})
 }
 
-// Grenade is serialized as a compact JSON array: [startTick, endTick, type, x, y]
+// Grenade is serialized as a compact JSON array: [startTick, endTick, type, x, y, throwerIdx]
 // type: 0=smoke, 1=flash, 2=HE, 3=molotov, 4=smoke-CT, 5=smoke-T; endTick=0 means instant
+// throwerIdx: index into Players slice (-1 if unknown)
 type Grenade struct {
-	StartTick int
-	EndTick   int
-	Type      int
-	X         int
-	Y         int
+	StartTick  int
+	EndTick    int
+	Type       int
+	X          int
+	Y          int
+	ThrowerIdx int
 }
 
 func (g Grenade) MarshalJSON() ([]byte, error) {
-	return json.Marshal([5]int{g.StartTick, g.EndTick, g.Type, g.X, g.Y})
+	return json.Marshal([6]int{g.StartTick, g.EndTick, g.Type, g.X, g.Y, g.ThrowerIdx})
 }
 
 // Shot is serialized as a compact JSON array: [tick, playerIdx]
@@ -139,6 +142,19 @@ type Shot struct {
 
 func (s Shot) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]int{s.Tick, s.PIdx})
+}
+
+// HitEvent records a single damage-dealt event, serialized as: [tick, atkIdx, vicIdx, dmg, weapon]
+type HitEvent struct {
+	Tick   int
+	AtkIdx int
+	VicIdx int
+	DMG    int
+	Weapon string
+}
+
+func (h HitEvent) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]any{h.Tick, h.AtkIdx, h.VicIdx, h.DMG, h.Weapon})
 }
 
 // GrenadeTrail is the throw arc of a grenade, serialized as: [startTick, endTick, type, [[tickOffset,x,y],...]]
@@ -188,6 +204,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 	lastShot := map[int]int{}            // playerIdx → last shot tick (dedup)
 	roundVicDmg := map[int]map[int]int{} // attIdx → vicIdx → accumulated hp-dmg this round
 	pendingThrows := map[int64]int{}     // grenade uniqueID → throw tick
+	lastMolotovThrowerIdx := -1          // thrower of the most recent molotov projectile (for InfernoStart)
 	var bombX, bombY int
 	var bombSite string
 
@@ -259,6 +276,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 		lastShot = map[int]int{}
 		roundVicDmg = map[int]map[int]int{}
 		pendingThrows = map[int64]int{}
+		lastMolotovThrowerIdx = -1
 	})
 
 	p.RegisterEventHandler(func(e events.RoundFreezetimeEnd) {
@@ -359,12 +377,20 @@ func Parse(r io.Reader) (*DemoData, error) {
 			data.Stats[ai].DMG += e.HealthDamage
 			cur.Dmg = append(cur.Dmg, [2]int{ai, e.HealthDamage})
 		}
-		// Track per-victim damage for kill feed display.
 		if ai >= 0 && vi >= 0 {
 			if roundVicDmg[ai] == nil {
 				roundVicDmg[ai] = map[int]int{}
 			}
 			roundVicDmg[ai][vi] += e.HealthDamage
+			// Record damage event for the live feed.
+			tick := p.GameState().IngameTick()
+			var wep string
+			if e.Weapon != nil {
+				wep = e.Weapon.Type.String()
+			}
+			cur.Hits = append(cur.Hits, HitEvent{
+				Tick: tick, AtkIdx: ai, VicIdx: vi, DMG: e.HealthDamage, Weapon: wep,
+			})
 		}
 	})
 
@@ -450,11 +476,12 @@ func Parse(r io.Reader) (*DemoData, error) {
 			}
 		}
 		cur.Grenades = append(cur.Grenades, Grenade{
-			StartTick: tick,
-			EndTick:   tick + 1152, // ~18 s at 64 ticks/s
-			Type:      smokeType,
-			X:         iround(e.Position.X),
-			Y:         iround(e.Position.Y),
+			StartTick:  tick,
+			EndTick:    tick + 1152, // ~18 s at 64 ticks/s
+			Type:       smokeType,
+			X:          iround(e.Position.X),
+			Y:          iround(e.Position.Y),
+			ThrowerIdx: getIdx(e.Thrower),
 		})
 	})
 
@@ -464,11 +491,12 @@ func Parse(r io.Reader) (*DemoData, error) {
 		}
 		tick := p.GameState().IngameTick()
 		cur.Grenades = append(cur.Grenades, Grenade{
-			StartTick: tick,
-			EndTick:   0,
-			Type:      2,
-			X:         iround(e.Position.X),
-			Y:         iround(e.Position.Y),
+			StartTick:  tick,
+			EndTick:    0,
+			Type:       2,
+			X:          iround(e.Position.X),
+			Y:          iround(e.Position.Y),
+			ThrowerIdx: getIdx(e.Thrower),
 		})
 	})
 
@@ -478,11 +506,12 @@ func Parse(r io.Reader) (*DemoData, error) {
 		}
 		tick := p.GameState().IngameTick()
 		cur.Grenades = append(cur.Grenades, Grenade{
-			StartTick: tick,
-			EndTick:   0,
-			Type:      1,
-			X:         iround(e.Position.X),
-			Y:         iround(e.Position.Y),
+			StartTick:  tick,
+			EndTick:    0,
+			Type:       1,
+			X:          iround(e.Position.X),
+			Y:          iround(e.Position.Y),
+			ThrowerIdx: getIdx(e.Thrower),
 		})
 	})
 
@@ -493,12 +522,14 @@ func Parse(r io.Reader) (*DemoData, error) {
 		tick := p.GameState().IngameTick()
 		pos := e.Inferno.Entity.Position()
 		cur.Grenades = append(cur.Grenades, Grenade{
-			StartTick: tick,
-			EndTick:   tick + 448, // ~7 s at 64 ticks/s
-			Type:      3,
-			X:         iround(pos.X),
-			Y:         iround(pos.Y),
+			StartTick:  tick,
+			EndTick:    tick + 448, // ~7 s at 64 ticks/s
+			Type:       3,
+			X:          iround(pos.X),
+			Y:          iround(pos.Y),
+			ThrowerIdx: lastMolotovThrowerIdx, // set by GrenadeProjectileDestroy just before
 		})
+		lastMolotovThrowerIdx = -1
 	})
 
 	// ── Grenade trajectory (throw arc) ──────────────────────────────────────
@@ -526,6 +557,10 @@ func Parse(r io.Reader) (*DemoData, error) {
 				gt = 5
 			}
 		}
+		// Track molotov thrower so InfernoStart (fired next) can pick it up.
+		if gt == 3 && e.Projectile.Thrower != nil {
+			lastMolotovThrowerIdx = getIdx(e.Projectile.Thrower)
+		}
 		uid := e.Projectile.UniqueID()
 		startTick, ok := pendingThrows[uid]
 		if !ok {
@@ -544,12 +579,18 @@ func Parse(r io.Reader) (*DemoData, error) {
 		points := make([][3]int, 0, 80)
 		for i := 0; i < len(traj); i += step {
 			te := traj[i]
-			tickOff := int(math.Round(te.Time.Seconds() * 64))
+			tickOff := int(math.Round(te.Time.Seconds()*64)) - startTick
+			if tickOff < 0 {
+				tickOff = 0
+			}
 			points = append(points, [3]int{tickOff, iround(te.Position.X), iround(te.Position.Y)})
 		}
 		// Always include the final point
 		last := traj[len(traj)-1]
-		lastOff := int(math.Round(last.Time.Seconds() * 64))
+		lastOff := int(math.Round(last.Time.Seconds()*64)) - startTick
+		if lastOff < 0 {
+			lastOff = 0
+		}
 		if points[len(points)-1][0] != lastOff {
 			points = append(points, [3]int{lastOff, iround(last.Position.X), iround(last.Position.Y)})
 		}
