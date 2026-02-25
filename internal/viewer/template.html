@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS2 Demo Viewer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;user-select:none}
+#hdr{padding:8px 16px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:16px;flex-shrink:0}
+#hdr h1{font-size:15px;font-weight:600;color:#58a6ff}
+#hdr-info{font-size:12px;color:#8b949e}
+#main{flex:1;display:flex;overflow:hidden}
+#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
+canvas{display:block;cursor:crosshair}
+#killfeed{position:absolute;top:10px;right:10px;width:230px;pointer-events:none;display:flex;flex-direction:column;gap:3px}
+.kf-entry{background:rgba(13,17,23,0.82);border-left:3px solid #444;border-radius:0 4px 4px 0;padding:4px 7px;font-size:11px;display:flex;align-items:center;gap:5px}
+.kf-ct{border-left-color:#4fc3f7}
+.kf-t{border-left-color:#ff9800}
+.kf-name-atk{font-weight:600}
+.kf-name-vic{color:#8b949e}
+.kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
+.kf-weapon{color:#8b949e;font-size:10px}
+#level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
+#level-btn:hover{background:#30363d}
+#level-btn.lower{background:#2ea043;border-color:#2ea043}
+#tooltip{position:absolute;background:rgba(13,17,23,0.92);border:1px solid #30363d;border-radius:4px;padding:4px 8px;font-size:11px;pointer-events:none;display:none;white-space:nowrap;z-index:10}
+#controls{padding:8px 16px;background:#161b22;border-top:1px solid #30363d;display:flex;align-items:center;gap:10px;flex-shrink:0;min-height:46px}
+.round-nav{display:flex;align-items:center;gap:4px}
+.nav-btn{background:#21262d;border:1px solid #30363d;color:#e6edf3;width:26px;height:26px;border-radius:4px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
+.nav-btn:hover{background:#30363d}
+#round-lbl{font-size:12px;min-width:80px;text-align:center;color:#e6edf3}
+#play-btn{background:#238636;border:none;color:#fff;padding:5px 14px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;min-width:70px;height:28px}
+#play-btn:hover{background:#2ea043}
+#timeline{flex:1;accent-color:#2ea043;cursor:pointer}
+.spd-btns{display:flex;gap:3px}
+.spd-btn{background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:11px}
+.spd-btn:hover{background:#30363d;color:#e6edf3}
+.spd-btn.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+#tick-lbl{font-size:11px;color:#8b949e;min-width:90px;text-align:right}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <h1 id="map-name">—</h1>
+  <span id="hdr-info"></span>
+</div>
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+    <div id="killfeed"></div>
+    <div id="level-btn" style="display:none" onclick="toggleLevel()">Upper</div>
+    <div id="tooltip"></div>
+  </div>
+</div>
+<div id="controls">
+  <div class="round-nav">
+    <button class="nav-btn" onclick="changeRound(-1)">&#9664;</button>
+    <span id="round-lbl">Round 1</span>
+    <button class="nav-btn" onclick="changeRound(1)">&#9654;</button>
+  </div>
+  <button id="play-btn" onclick="togglePlay()">&#9654; Play</button>
+  <input type="range" id="timeline" min="0" max="1000" value="0" oninput="onScrub(this.value)">
+  <div class="spd-btns">
+    <button class="spd-btn active" onclick="setSpeed(1,this)">1×</button>
+    <button class="spd-btn" onclick="setSpeed(2,this)">2×</button>
+    <button class="spd-btn" onclick="setSpeed(4,this)">4×</button>
+    <button class="spd-btn" onclick="setSpeed(8,this)">8×</button>
+  </div>
+  <span id="tick-lbl"></span>
+</div>
+
+<script>
+const DEMO = /*INJECT_DATA*/;
+
+// ── Data format helpers ───────────────────────────────────────────────────────
+// PlayerState array: [idx, flags, hp, x, y, z, yaw]
+// flags: 0=CT+alive, 1=CT+dead, 2=T+alive, 3=T+dead
+const PS_IDX   = 0, PS_FLAGS = 1, PS_HP = 2;
+const PS_X     = 3, PS_Y     = 4, PS_Z  = 5, PS_YAW = 6;
+
+function psTeam(ps)  { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
+function psAlive(ps) { return !(ps[PS_FLAGS] & 1); }
+
+// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY]
+const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const RADAR_SIZE       = 1024;
+const SAMPLE_FPS       = 4;    // SampleTicks=16 at 64 tick/s → 4 keyframes/s
+const CT_COLOR         = '#4fc3f7';
+const T_COLOR          = '#ff9800';
+const DEAD_COLOR       = '#555';
+const PLAYER_R         = 8;    // base radius (scales with canvas)
+const DIR_LEN          = 18;   // direction indicator base length
+const KILL_FLASH_TICKS = 48;
+const KILL_FEED_MAX    = 6;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let roundIdx = 0;
+let framePos = 0;   // float: floor=frame index, frac=interp factor
+let playing  = false;
+let speed    = 1;
+let showLower = false;
+let lastTS   = null;
+let rafID    = null;
+let mousePos = null;
+
+// ── Canvas ────────────────────────────────────────────────────────────────────
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+
+const radarImg      = new Image();
+const radarLowerImg = new Image();
+let radarReady      = false;
+let radarLowerReady = false;
+
+radarImg.onload = () => { radarReady = true; render(); };
+radarImg.src = DEMO.radar;
+if (DEMO.has_lower) {
+  radarLowerImg.onload = () => { radarLowerReady = true; };
+  radarLowerImg.src = DEMO.radar_lower;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.getElementById('map-name').textContent = DEMO.map;
+document.getElementById('hdr-info').textContent =
+  DEMO.rounds.length + ' rounds · ' + DEMO.players.length + ' players';
+if (DEMO.has_lower) {
+  document.getElementById('level-btn').style.display = 'block';
+}
+updateRoundLabel();
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+canvas.addEventListener('mousemove', onMouseMove);
+canvas.addEventListener('mouseleave', () => { mousePos = null; tooltip.style.display = 'none'; });
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  const sz = Math.min(wrap.clientWidth, wrap.clientHeight);
+  canvas.width = sz;
+  canvas.height = sz;
+  render();
+}
+
+// ── Coordinates ───────────────────────────────────────────────────────────────
+function w2c(wx, wy) {
+  const m = DEMO.meta, cs = canvas.width / RADAR_SIZE;
+  return [((wx - m.pos_x) / m.scale) * cs, ((m.pos_y - wy) / m.scale) * cs];
+}
+
+// ── Interpolation ─────────────────────────────────────────────────────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function interpPlayers(round, fp) {
+  const fi = Math.floor(fp);
+  const t  = fp - fi;
+  const f0 = round.frames[Math.min(fi,     round.frames.length - 1)];
+  const f1 = round.frames[Math.min(fi + 1, round.frames.length - 1)];
+  if (!f0) return [];
+
+  // Build map from player index → state array
+  const map0 = {};
+  for (const ps of f0.p) map0[ps[PS_IDX]] = ps;
+
+  const src = (f1 && f1 !== f0) ? f1.p : f0.p;
+  return src.map(ps1 => {
+    const ps0 = map0[ps1[PS_IDX]];
+    if (!ps0 || t === 0 || f0 === f1) return ps1;
+    // Return a new array with interpolated position; keep flags/hp from ps1
+    return [
+      ps1[PS_IDX],
+      ps1[PS_FLAGS],
+      ps1[PS_HP],
+      Math.round(lerp(ps0[PS_X], ps1[PS_X], t)),
+      Math.round(lerp(ps0[PS_Y], ps1[PS_Y], t)),
+      Math.round(lerp(ps0[PS_Z], ps1[PS_Z], t)),
+      ps1[PS_YAW],
+    ];
+  });
+}
+
+function currentTick(round, fp) {
+  const fi = Math.floor(fp);
+  const t  = fp - fi;
+  const f0 = round.frames[Math.min(fi,     round.frames.length - 1)];
+  const f1 = round.frames[Math.min(fi + 1, round.frames.length - 1)];
+  if (!f0) return 0;
+  if (!f1 || f0 === f1) return f0.tick;
+  return Math.round(lerp(f0.tick, f1.tick, t));
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  if (!radarReady) return;
+  const sz = canvas.width;
+  ctx.clearRect(0, 0, sz, sz);
+
+  const img = (showLower && radarLowerReady) ? radarLowerImg : radarImg;
+  ctx.drawImage(img, 0, 0, sz, sz);
+
+  const round = DEMO.rounds[roundIdx];
+  if (!round || round.frames.length === 0) return;
+
+  const tick    = currentTick(round, framePos);
+  const players = interpPlayers(round, framePos);
+  const sc      = sz / RADAR_SIZE;
+  const r       = Math.max(5, Math.round(PLAYER_R * sc));
+  const dLen    = Math.round(DIR_LEN * sc);
+  const lw      = Math.max(1.5, sc * 1.5);
+
+  // kill flashes
+  for (const k of round.kills) {
+    const age = tick - k[K_TICK];
+    if (age < 0 || age >= KILL_FLASH_TICKS) continue;
+    const alpha = 1 - age / KILL_FLASH_TICKS;
+    const [vx, vy] = w2c(k[K_VX], k[K_VY]);
+    const maxR = r * 3 * (1 - age / KILL_FLASH_TICKS * 0.5);
+    const grad = ctx.createRadialGradient(vx, vy, 0, vx, vy, maxR);
+    grad.addColorStop(0,   `rgba(255,80,80,${(alpha*0.9).toFixed(2)})`);
+    grad.addColorStop(0.5, `rgba(255,150,50,${(alpha*0.5).toFixed(2)})`);
+    grad.addColorStop(1,   'rgba(255,80,80,0)');
+    ctx.beginPath();
+    ctx.arc(vx, vy, maxR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  // players
+  const hoverHits = [];
+  for (const ps of players) {
+    const team  = psTeam(ps);
+    const alive = psAlive(ps);
+    const onLower = DEMO.has_lower && ps[PS_Z] < DEMO.lower_z_max;
+    if (DEMO.has_lower && onLower !== showLower) continue;
+
+    const [cx, cy] = w2c(ps[PS_X], ps[PS_Y]);
+
+    if (!alive) {
+      ctx.strokeStyle = DEAD_COLOR;
+      ctx.lineWidth   = lw;
+      const d = r * 0.65;
+      ctx.beginPath();
+      ctx.moveTo(cx-d, cy-d); ctx.lineTo(cx+d, cy+d);
+      ctx.moveTo(cx+d, cy-d); ctx.lineTo(cx-d, cy+d);
+      ctx.stroke();
+      continue;
+    }
+
+    // direction indicator
+    const yawRad = ps[PS_YAW] * Math.PI / 180;
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth   = lw;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(yawRad)*dLen, cy - Math.sin(yawRad)*dLen);
+    ctx.stroke();
+
+    // circle
+    const color = team === 'CT' ? CT_COLOR : T_COLOR;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle   = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth   = Math.max(1, sc);
+    ctx.stroke();
+
+    if (mousePos) {
+      const dx = mousePos.x - cx, dy = mousePos.y - cy;
+      if (dx*dx + dy*dy <= (r+5)*(r+5)) hoverHits.push({ps, cx, cy});
+    }
+  }
+
+  // tooltip
+  if (hoverHits.length > 0) {
+    const {ps, cx, cy} = hoverHits[0];
+    const info = DEMO.players[ps[PS_IDX]];
+    tooltip.textContent = `${info ? info.name : '?'} · ${ps[PS_HP]} HP · ${psTeam(ps)}`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (cx + r + 4) + 'px';
+    tooltip.style.top  = (cy - 10)    + 'px';
+  } else if (mousePos) {
+    tooltip.style.display = 'none';
+  }
+
+  updateKillFeed(round, tick);
+  document.getElementById('tick-lbl').textContent = 'tick ' + tick;
+  const prog = round.frames.length > 1 ? framePos / (round.frames.length - 1) : 0;
+  document.getElementById('timeline').value = Math.round(prog * 1000);
+}
+
+// ── Kill feed ─────────────────────────────────────────────────────────────────
+let lastKillCount = -1;
+
+function updateKillFeed(round, tick) {
+  const visible = round.kills.filter(k => k[K_TICK] <= tick).slice(-KILL_FEED_MAX).reverse();
+  const feed = document.getElementById('killfeed');
+
+  // Only rebuild DOM when the set of visible kills changes (new kill occurred or round changed).
+  if (visible.length !== lastKillCount) {
+    lastKillCount = visible.length;
+    feed.innerHTML = '';
+    for (const k of visible) {
+      const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
+      const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
+      const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+      const el = document.createElement('div');
+      el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
+      el.dataset.kt = k[K_TICK];
+      el.innerHTML =
+        `<span class="kf-name-atk">${esc(atkName)}</span>` +
+        `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
+        `<span class="kf-name-vic">${esc(vicName)}</span>` +
+        (k[K_HS] ? '<span class="kf-hs">HS</span>' : '');
+      feed.appendChild(el);
+    }
+  }
+
+  // Update opacities in-place (no DOM rebuild needed).
+  for (const el of feed.children) {
+    const age = tick - parseInt(el.dataset.kt, 10);
+    el.style.opacity = age < 128 ? 1 : Math.max(0.3, 1 - (age - 128) / 384);
+  }
+}
+
+function getPlayerTeam(round, tick, pidx) {
+  for (let i = round.frames.length - 1; i >= 0; i--) {
+    if (round.frames[i].tick <= tick) {
+      const ps = round.frames[i].p.find(p => p[PS_IDX] === pidx);
+      if (ps) return psTeam(ps);
+    }
+  }
+  return 'CT';
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Playback ──────────────────────────────────────────────────────────────────
+function animFrame(ts) {
+  if (!playing) { rafID = null; return; }
+  if (lastTS !== null) {
+    const dt = Math.min((ts - lastTS) / 1000, 0.033);
+    framePos += dt * SAMPLE_FPS * speed;
+    const round = DEMO.rounds[roundIdx];
+    if (framePos >= round.frames.length - 1) {
+      framePos = round.frames.length - 1;
+      playing  = false;
+      updatePlayBtn();
+    }
+  }
+  lastTS = ts;
+  render();
+  if (playing) rafID = requestAnimationFrame(animFrame);
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+function togglePlay() {
+  playing = !playing;
+  updatePlayBtn();
+  if (playing) {
+    const round = DEMO.rounds[roundIdx];
+    if (framePos >= round.frames.length - 1) framePos = 0;
+    lastTS = null;
+    if (rafID) cancelAnimationFrame(rafID);
+    rafID = requestAnimationFrame(animFrame);
+  }
+}
+
+function updatePlayBtn() {
+  document.getElementById('play-btn').innerHTML =
+    playing ? '&#9646;&#9646; Pause' : '&#9654; Play';
+}
+
+function changeRound(delta) {
+  const next = roundIdx + delta;
+  if (next < 0 || next >= DEMO.rounds.length) return;
+  roundIdx  = next;
+  framePos  = 0;
+  playing   = false;
+  lastKillCount = -1;
+  updatePlayBtn();
+  updateRoundLabel();
+  render();
+}
+
+function updateRoundLabel() {
+  const r = DEMO.rounds[roundIdx];
+  const suffix = r && r.w ? ' · ' + r.w : '';
+  document.getElementById('round-lbl').textContent =
+    'Round ' + (r ? r.n : roundIdx + 1) + '/' + DEMO.rounds.length + suffix;
+}
+
+function onScrub(val) {
+  const round = DEMO.rounds[roundIdx];
+  if (!round) return;
+  framePos = (val / 1000) * (round.frames.length - 1);
+  playing  = false;
+  updatePlayBtn();
+  render();
+}
+
+function setSpeed(s, btn) {
+  speed = s;
+  document.querySelectorAll('.spd-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function toggleLevel() {
+  showLower = !showLower;
+  const btn = document.getElementById('level-btn');
+  btn.textContent = showLower ? 'Lower' : 'Upper';
+  btn.classList.toggle('lower', showLower);
+  render();
+}
+
+function onMouseMove(e) {
+  const rect = canvas.getBoundingClientRect();
+  mousePos = {
+    x: (e.clientX - rect.left) * (canvas.width  / rect.width),
+    y: (e.clientY - rect.top)  * (canvas.height / rect.height),
+  };
+  if (!playing) render();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) lastTS = null;
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName !== 'BODY') return;
+  if (e.code === 'Space')      { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); changeRound(1); }
+  if (e.code === 'ArrowLeft')  { e.preventDefault(); changeRound(-1); }
+});
+</script>
+</body>
+</html>
