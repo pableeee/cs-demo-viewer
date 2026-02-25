@@ -182,7 +182,8 @@ func Parse(r io.Reader) (*DemoData, error) {
 	var cur *Round
 	var inRound bool
 	var roundNum int
-	var freezeEndTick int // only sample frames after freeze ends
+	var freezeEndTick int  // only sample frames after freeze ends
+	var lastSampledTick int // deduplicate frames caused by full-snapshot packets
 	var ctScore, tScore int
 	lastShot := map[int]int{}            // playerIdx → last shot tick (dedup)
 	roundVicDmg := map[int]map[int]int{} // attIdx → vicIdx → accumulated hp-dmg this round
@@ -253,6 +254,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 		roundNum++
 		cur = &Round{Num: roundNum, CTScore: ctScore, TScore: tScore}
 		freezeEndTick = 0
+		lastSampledTick = 0
 		inRound = true
 		lastShot = map[int]int{}
 		roundVicDmg = map[int]map[int]int{}
@@ -583,9 +585,13 @@ func Parse(r io.Reader) (*DemoData, error) {
 		if inRound && cur != nil {
 			tick := p.GameState().IngameTick()
 			// Skip freeze time; freezeEndTick == 0 means freeze hasn't ended yet.
-			if freezeEndTick > 0 && tick >= freezeEndTick && tick%SampleTicks == 0 {
+			// Also skip if tick hasn't advanced — full-snapshot (DEM_FullPacket) packets
+			// replay the same tick and would create duplicate frames, causing a periodic
+			// 1-frame freeze in playback every ~64 ticks (1 s).
+			if freezeEndTick > 0 && tick >= freezeEndTick && tick > lastSampledTick && tick%SampleTicks == 0 {
 				if f := captureFrame(tick); len(f.Players) > 0 {
 					cur.Frames = append(cur.Frames, f)
+					lastSampledTick = tick
 				}
 			}
 		}
