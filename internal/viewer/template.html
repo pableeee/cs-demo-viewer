@@ -18,11 +18,12 @@ canvas{display:block;cursor:crosshair}
 .kf-row1{display:flex;align-items:center;gap:6px}
 .kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
 .kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
-.kf-name-atk{font-weight:700}.kf-name-vic{color:#8b949e}
+.kf-name-atk{font-weight:700}.kf-name-vic{font-weight:700;color:#adbac7}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:11px}
 .kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
 .kf-time{color:#6e7681;font-size:10px;margin-left:auto}
+.kf-nade{border-left-color:#7ee787}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -104,6 +105,7 @@ canvas{display:block;cursor:crosshair}
     <div id="event-marks"></div>
   </div>
   <div class="spd-btns">
+    <button class="spd-btn" onclick="setSpeed(0.5,this)">0.5×</button>
     <button class="spd-btn active" onclick="setSpeed(1,this)">1×</button>
     <button class="spd-btn" onclick="setSpeed(2,this)">2×</button>
     <button class="spd-btn" onclick="setSpeed(4,this)">4×</button>
@@ -142,6 +144,10 @@ const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3, GT_SMOKE_CT=4, GT_SMOKE_T=5
 // Shot array: [tick, playerIdx]
 const SH_TICK=0, SH_PIDX=1;
 
+// GrenadeTrail array: [startTick, endTick, type, [[tickOffset,x,y],...]]
+const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_PTS=3;
+const TR_PT_T=0, TR_PT_X=1, TR_PT_Y=2;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 const RADAR_SIZE        = 1024;
 const SAMPLE_FPS        = 4;
@@ -157,6 +163,18 @@ const MOLOTOV_WORLD_R   = 120;
 const GREN_FADE_TICKS   = 64;
 const SHOOT_FLASH_TICKS = 12;
 const BOMB_FLASH_PERIOD = 32;
+const TRAIL_FADE_TICKS  = 96;  // ticks to fade trail after nade lands (~1.5 s)
+
+const TRAIL_COLORS = [
+  'rgba(200,200,200,1)',  // 0: smoke (generic) — light gray
+  'rgba(255,255,180,1)',  // 1: flash           — pale yellow
+  'rgba(120,230,90,1)',   // 2: HE              — lime green
+  'rgba(255,120,30,1)',   // 3: molotov         — orange
+  'rgba(80,180,255,1)',   // 4: CT smoke        — blue
+  'rgba(255,170,50,1)',   // 5: T smoke         — amber
+];
+
+const GREN_FEED_LABELS = ['Smoke', 'Flash', 'HE', 'Molotov', 'CT Smoke', 'T Smoke'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let roundIdx = 0;
@@ -302,6 +320,46 @@ function render() {
     ctx.arc(vx, vy, maxR, 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
+  }
+
+  // ── Grenade throw arcs ──────────────────────────────────────────────────────
+  for (const tr of (round.trails || [])) {
+    const fadeTick = tr[TR_ET] + TRAIL_FADE_TICKS;
+    if (tick < tr[TR_ST] || tick > fadeTick) continue;
+    const pts = tr[TR_PTS];
+    if (!pts || pts.length < 2) continue;
+
+    const inFlight = tick <= tr[TR_ET];
+    const elapsed  = tick - tr[TR_ST];
+
+    // Determine last visible point index
+    let lastIdx = pts.length - 1;
+    if (inFlight) {
+      lastIdx = -1;
+      for (let i = 0; i < pts.length; i++) {
+        if (pts[i][TR_PT_T] <= elapsed) lastIdx = i; else break;
+      }
+      if (lastIdx < 0) continue;
+    }
+
+    const fadeAlpha = inFlight ? 0.85 : 0.85 * (1 - (tick - tr[TR_ET]) / TRAIL_FADE_TICKS);
+    if (fadeAlpha <= 0.01) continue;
+
+    const trailColor = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,1)';
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha;
+    ctx.setLineDash([Math.max(2, sc * 3), Math.max(1.5, sc * 2)]);
+    ctx.lineWidth   = Math.max(1.2, sc * 2);
+    ctx.strokeStyle = trailColor;
+    ctx.beginPath();
+    const [sx0, sy0] = w2c(pts[0][TR_PT_X], pts[0][TR_PT_Y]);
+    ctx.moveTo(sx0, sy0);
+    for (let i = 1; i <= lastIdx; i++) {
+      const [px, py] = w2c(pts[i][TR_PT_X], pts[i][TR_PT_Y]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
   // ── Active smokes ───────────────────────────────────────────────────────────
@@ -549,14 +607,16 @@ let lastFeedSig = '';
 const BOMB_ACT_LABEL = ['Planting…','B Planted','Defusing…','B Defused','B Exploded','B Dropped','B Picked up'];
 
 function updateKillFeed(round, tick) {
-  // Merge kills + bomb events visible at current tick, sorted by tick.
+  // Merge kills + bomb events + nade events visible at current tick, sorted by tick.
   const kills = (round.kills || []).filter(k => k[K_TICK] <= tick);
   const bombEvts = (round.bomb || []).filter(ba => ba[BA_TICK] <= tick &&
     ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5); // skip plant_begin(0) and pickup(6)
+  const nadeEvts = (round.grenades || []).filter(g => g[GR_ST] <= tick);
 
   const merged = [
-    ...kills.map(k  => ({ t: k[K_TICK],  type: 'kill',  data: k  })),
-    ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb',  data: ba })),
+    ...kills.map(k    => ({ t: k[K_TICK],   type: 'kill', data: k  })),
+    ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
+    ...nadeEvts.map(g  => ({ t: g[GR_ST],   type: 'nade', data: g  })),
   ].sort((a, b) => a.t - b.t).slice(-KILL_FEED_MAX);
 
   const sig = merged.map(e => e.t + e.type).join(',');
@@ -575,6 +635,15 @@ function updateKillFeed(round, tick) {
           `<span class="kf-name-atk">${esc(BOMB_ACT_LABEL[ba[BA_ACT]] || 'Bomb event')}</span>` +
           (ba[BA_SITE] ? `<span class="kf-weapon">· Site ${esc(ba[BA_SITE])}</span>` : '') +
           `<span class="kf-time">${roundTimeFmt(round, ba[BA_TICK])}</span>` +
+          `</div>`;
+      } else if (entry.type === 'nade') {
+        const g = entry.data;
+        const label = GREN_FEED_LABELS[g[GR_TYPE]] || 'Nade';
+        el.className = 'kf-entry kf-nade';
+        el.innerHTML =
+          `<div class="kf-row1">` +
+          `<span class="kf-name-atk">${esc(label)}</span>` +
+          `<span class="kf-time">${roundTimeFmt(round, g[GR_ST])}</span>` +
           `</div>`;
       } else {
         const k = entry.data;

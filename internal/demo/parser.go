@@ -51,8 +51,9 @@ type Round struct {
 	Kills     []Kill       `json:"kills"`
 	Bomb      []BombAction `json:"bomb"`
 	Grenades  []Grenade    `json:"grenades"`
-	Shots     []Shot       `json:"shots"`
-	Dmg       [][2]int     `json:"dmg,omitempty"`  // per-player damage: [playerIdx, healthDamage]
+	Shots     []Shot         `json:"shots"`
+	Dmg       [][2]int       `json:"dmg,omitempty"`   // per-player damage: [playerIdx, healthDamage]
+	Trails    []GrenadeTrail `json:"trails,omitempty"` // grenade throw arcs
 }
 
 // Frame is one sampled tick's snapshot of all player states.
@@ -140,6 +141,35 @@ func (s Shot) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]int{s.Tick, s.PIdx})
 }
 
+// GrenadeTrail is the throw arc of a grenade, serialized as: [startTick, endTick, type, [[tickOffset,x,y],...]]
+// tickOffset is the elapsed ticks from startTick at each sampled point.
+type GrenadeTrail struct {
+	StartTick int
+	EndTick   int
+	Type      int
+	Points    [][3]int // [tickOffset, x, y]
+}
+
+func (gt GrenadeTrail) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]any{gt.StartTick, gt.EndTick, gt.Type, gt.Points})
+}
+
+// equipToGrenadeType maps equipment type to the Grenade type constant.
+// Returns -1 for non-tracked types.
+func equipToGrenadeType(t common.EquipmentType) int {
+	switch t {
+	case common.EqSmoke:
+		return 0
+	case common.EqFlash:
+		return 1
+	case common.EqHE:
+		return 2
+	case common.EqMolotov, common.EqIncendiary:
+		return 3
+	}
+	return -1
+}
+
 
 // Parse reads a CS2 demo from r and returns the structured DemoData.
 func Parse(r io.Reader) (*DemoData, error) {
@@ -154,8 +184,9 @@ func Parse(r io.Reader) (*DemoData, error) {
 	var roundNum int
 	var freezeEndTick int // only sample frames after freeze ends
 	var ctScore, tScore int
-	lastShot := map[int]int{}          // playerIdx → last shot tick (dedup)
+	lastShot := map[int]int{}            // playerIdx → last shot tick (dedup)
 	roundVicDmg := map[int]map[int]int{} // attIdx → vicIdx → accumulated hp-dmg this round
+	pendingThrows := map[int64]int{}     // grenade uniqueID → throw tick
 	var bombX, bombY int
 	var bombSite string
 
@@ -225,6 +256,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 		inRound = true
 		lastShot = map[int]int{}
 		roundVicDmg = map[int]map[int]int{}
+		pendingThrows = map[int64]int{}
 	})
 
 	p.RegisterEventHandler(func(e events.RoundFreezetimeEnd) {
@@ -464,6 +496,66 @@ func Parse(r io.Reader) (*DemoData, error) {
 			Type:      3,
 			X:         iround(pos.X),
 			Y:         iround(pos.Y),
+		})
+	})
+
+	// ── Grenade trajectory (throw arc) ──────────────────────────────────────
+
+	p.RegisterEventHandler(func(e events.GrenadeProjectileThrow) {
+		if cur == nil || e.Projectile == nil {
+			return
+		}
+		pendingThrows[e.Projectile.UniqueID()] = p.GameState().IngameTick()
+	})
+
+	p.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
+		if cur == nil || e.Projectile == nil || e.Projectile.WeaponInstance == nil {
+			return
+		}
+		gt := equipToGrenadeType(e.Projectile.WeaponInstance.Type)
+		if gt < 0 {
+			return
+		}
+		// Team-coloured smokes
+		if gt == 0 && e.Projectile.Thrower != nil {
+			if e.Projectile.Thrower.Team == common.TeamCounterTerrorists {
+				gt = 4
+			} else if e.Projectile.Thrower.Team == common.TeamTerrorists {
+				gt = 5
+			}
+		}
+		uid := e.Projectile.UniqueID()
+		startTick, ok := pendingThrows[uid]
+		if !ok {
+			return // no recorded throw, skip
+		}
+		delete(pendingThrows, uid)
+		traj := e.Projectile.Trajectory2
+		if len(traj) < 2 {
+			return
+		}
+		// Subsample to at most 80 points
+		step := 1
+		if len(traj) > 80 {
+			step = len(traj) / 80
+		}
+		points := make([][3]int, 0, 80)
+		for i := 0; i < len(traj); i += step {
+			te := traj[i]
+			tickOff := int(math.Round(te.Time.Seconds() * 64))
+			points = append(points, [3]int{tickOff, iround(te.Position.X), iround(te.Position.Y)})
+		}
+		// Always include the final point
+		last := traj[len(traj)-1]
+		lastOff := int(math.Round(last.Time.Seconds() * 64))
+		if points[len(points)-1][0] != lastOff {
+			points = append(points, [3]int{lastOff, iround(last.Position.X), iround(last.Position.Y)})
+		}
+		cur.Trails = append(cur.Trails, GrenadeTrail{
+			StartTick: startTick,
+			EndTick:   p.GameState().IngameTick(),
+			Type:      gt,
+			Points:    points,
 		})
 	})
 
