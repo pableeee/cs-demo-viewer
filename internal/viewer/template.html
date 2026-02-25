@@ -13,12 +13,16 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #main{flex:1;display:flex;overflow:hidden}
 #canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
-#killfeed{position:absolute;top:10px;right:10px;width:230px;pointer-events:none;display:flex;flex-direction:column;gap:3px}
-.kf-entry{background:rgba(13,17,23,0.82);border-left:3px solid #444;border-radius:0 4px 4px 0;padding:4px 7px;font-size:11px;display:flex;align-items:center;gap:5px}
-.kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}
-.kf-name-atk{font-weight:600}.kf-name-vic{color:#8b949e}
+#killfeed{position:absolute;top:10px;right:10px;width:260px;pointer-events:none;display:flex;flex-direction:column;gap:4px}
+.kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px}
+.kf-row1{display:flex;align-items:center;gap:6px}
+.kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
+.kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
+.kf-name-atk{font-weight:700}.kf-name-vic{color:#8b949e}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
-.kf-weapon{color:#8b949e;font-size:10px}
+.kf-weapon{color:#8b949e;font-size:11px}
+.kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
+.kf-time{color:#6e7681;font-size:10px;margin-left:auto}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -81,7 +85,7 @@ canvas{display:block;cursor:crosshair}
       <thead>
         <tr>
           <th>Player</th>
-          <th>K</th><th>D</th><th>HS%</th><th>ADR</th>
+          <th>K</th><th>D</th><th>HS%</th><th id="stats-dmg-hdr">DMG</th>
         </tr>
       </thead>
       <tbody id="stats-body"></tbody>
@@ -116,23 +120,27 @@ const DEMO = /*INJECT_DATA*/;
 const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6;
 function psTeam(ps)  { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
 function psAlive(ps) { return !(ps[PS_FLAGS] & 1); }
+function psBomb(ps)  { return !!(ps[PS_FLAGS] & 4); }
 
-// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY]
-const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8;
+// Round time: seconds elapsed from freeze-end tick
+function roundTimeFmt(round, tick) {
+  if (!round || !round.fe) return '';
+  const secs = Math.max(0, Math.floor((tick - round.fe) / 64));
+  return Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+}
+
+// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY, dmg]
+const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_DMG=9;
 
 // BombAction array: [tick, action, x, y, site]
 const BA_TICK=0, BA_ACT=1, BA_X=2, BA_Y=3, BA_SITE=4;
 
 // Grenade array: [startTick, endTick, type, x, y]
 const GR_ST=0, GR_ET=1, GR_TYPE=2, GR_X=3, GR_Y=4;
-const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3;
+const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3, GT_SMOKE_CT=4, GT_SMOKE_T=5;
 
 // Shot array: [tick, playerIdx]
 const SH_TICK=0, SH_PIDX=1;
-
-// Trail array: [grenType, [[frameID,x,y],...]]
-const TR_TYPE=0, TR_PTS=1;
-const TR_PT_TICK=0, TR_PT_X=1, TR_PT_Y=2;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const RADAR_SIZE        = 1024;
@@ -143,20 +151,12 @@ const DEAD_COLOR        = '#555';
 const PLAYER_R          = 8;
 const DIR_LEN           = 18;
 const KILL_FLASH_TICKS  = 48;
-const KILL_FEED_MAX     = 6;
+const KILL_FEED_MAX     = 8;
 const SMOKE_WORLD_R     = 170;
 const MOLOTOV_WORLD_R   = 120;
-const GREN_FADE_TICKS   = 96;
+const GREN_FADE_TICKS   = 64;
 const SHOOT_FLASH_TICKS = 12;
 const BOMB_FLASH_PERIOD = 32;
-const TRAIL_FLASH_TICKS = 32; // how long the dot lingers after grenade lands
-
-const TRAIL_COLORS = [
-  'rgba(180,180,180,0.75)',  // smoke: gray
-  'rgba(200,230,255,0.80)',  // flash: light blue-white
-  'rgba(100,220,80,0.85)',   // HE: green
-  'rgba(255,100,30,0.85)',   // molotov: orange-red
-];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let roundIdx = 0;
@@ -168,6 +168,9 @@ let statsOpen = false;
 let lastTS   = null;
 let rafID    = null;
 let mousePos = null;
+// Zoom / pan
+let zoom = 1, panX = 0, panY = 0;
+let dragging = false, dragStartX = 0, dragStartY = 0, dragPanX = 0, dragPanY = 0;
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 const canvas  = document.getElementById('canvas');
@@ -198,7 +201,6 @@ buildEventMarks(DEMO.rounds[roundIdx]);
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 canvas.addEventListener('mousemove', onMouseMove);
-canvas.addEventListener('mouseleave', () => { mousePos = null; tooltip.style.display = 'none'; });
 
 // ── Resize ────────────────────────────────────────────────────────────────────
 function resizeCanvas() {
@@ -206,17 +208,27 @@ function resizeCanvas() {
   const sz = Math.min(wrap.clientWidth, wrap.clientHeight);
   canvas.width = sz;
   canvas.height = sz;
+  clampPan();
   render();
 }
 
 // ── Coordinates ───────────────────────────────────────────────────────────────
 function w2c(wx, wy) {
   const m = DEMO.meta, cs = canvas.width / RADAR_SIZE;
-  return [((wx - m.pos_x) / m.scale) * cs, ((m.pos_y - wy) / m.scale) * cs];
+  const bx = ((wx - m.pos_x) / m.scale) * cs;
+  const by = ((m.pos_y - wy) / m.scale) * cs;
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  return [(bx - cx) * zoom + cx + panX, (by - cy) * zoom + cy + panY];
 }
 
 function worldRToPx(worldR) {
-  return (worldR / DEMO.meta.scale) * (canvas.width / RADAR_SIZE);
+  return zoom * (worldR / DEMO.meta.scale) * (canvas.width / RADAR_SIZE);
+}
+
+function clampPan() {
+  const maxPan = canvas.width / 2 * (zoom - 1);
+  panX = Math.max(-maxPan, Math.min(maxPan, panX));
+  panY = Math.max(-maxPan, Math.min(maxPan, panY));
 }
 
 // ── Interpolation ─────────────────────────────────────────────────────────────
@@ -261,7 +273,9 @@ function render() {
   ctx.clearRect(0, 0, sz, sz);
 
   const img = (showLower && radarLowerReady) ? radarLowerImg : radarImg;
-  ctx.drawImage(img, 0, 0, sz, sz);
+  const imgX = canvas.width / 2 * (1 - zoom) + panX;
+  const imgY = canvas.height / 2 * (1 - zoom) + panY;
+  ctx.drawImage(img, imgX, imgY, sz * zoom, sz * zoom);
 
   const round = DEMO.rounds[roundIdx];
   if (!round || round.frames.length === 0) return;
@@ -290,67 +304,31 @@ function render() {
     ctx.fill();
   }
 
-  // ── Grenade trails ──────────────────────────────────────────────────────────
-  const trails = round.trails || [];
-  for (const tr of trails) {
-    const pts = tr[TR_PTS];
-    if (!pts || pts.length < 2) continue;
-    const color = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,0.7)';
-
-    // Find last visible point index (frameID <= current tick)
-    let lastVisIdx = -1;
-    for (let i = 0; i < pts.length; i++) {
-      if (pts[i][TR_PT_TICK] <= tick) lastVisIdx = i; else break;
-    }
-    if (lastVisIdx < 0) continue;
-
-    // Draw dashed line through visible points
-    ctx.save();
-    ctx.setLineDash([Math.max(2, sc * 2.5), Math.max(3, sc * 3.5)]);
-    ctx.lineWidth = Math.max(1, sc * 1.5);
-    ctx.strokeStyle = color;
-    ctx.beginPath();
-    const [sx, sy] = w2c(pts[0][TR_PT_X], pts[0][TR_PT_Y]);
-    ctx.moveTo(sx, sy);
-    for (let i = 1; i <= lastVisIdx; i++) {
-      const [px, py] = w2c(pts[i][TR_PT_X], pts[i][TR_PT_Y]);
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Dot at current grenade position (flashes while in flight, fades after landing)
-    const lastPt = pts[lastVisIdx];
-    const landed = lastVisIdx === pts.length - 1;
-    const ageAfterLand = landed ? (tick - lastPt[TR_PT_TICK]) : 0;
-    if (!landed || ageAfterLand < TRAIL_FLASH_TICKS) {
-      const dotAlpha = landed ? (1 - ageAfterLand / TRAIL_FLASH_TICKS) : 1;
-      const blink = !landed && Math.floor(tick / 8) % 2 === 0;
-      if (!blink) {
-        const [gx, gy] = w2c(lastPt[TR_PT_X], lastPt[TR_PT_Y]);
-        const dotR = Math.max(2.5, r * 0.45);
-        ctx.beginPath();
-        ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
-        ctx.fillStyle = color.replace(/[\d.]+\)$/, `${dotAlpha.toFixed(2)})`);
-        ctx.fill();
-      }
-    }
-    ctx.restore();
-  }
-
   // ── Active smokes ───────────────────────────────────────────────────────────
   const grenades = round.grenades || [];
   for (const g of grenades) {
-    if (g[GR_TYPE] !== GT_SMOKE) continue;
+    const gt = g[GR_TYPE];
+    if (gt !== GT_SMOKE && gt !== GT_SMOKE_CT && gt !== GT_SMOKE_T) continue;
     if (tick < g[GR_ST] || tick > g[GR_ET]) continue;
     const [gx, gy] = w2c(g[GR_X], g[GR_Y]);
     const gr = worldRToPx(SMOKE_WORLD_R);
+    let fillColor, strokeColor;
+    if (gt === GT_SMOKE_CT) {
+      fillColor = 'rgba(80,170,230,0.42)';
+      strokeColor = 'rgba(100,200,255,0.72)';
+    } else if (gt === GT_SMOKE_T) {
+      fillColor = 'rgba(230,150,50,0.42)';
+      strokeColor = 'rgba(255,175,80,0.72)';
+    } else {
+      fillColor = 'rgba(180,180,180,0.42)';
+      strokeColor = 'rgba(210,210,210,0.72)';
+    }
     ctx.beginPath();
     ctx.arc(gx, gy, gr, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(180,180,180,0.45)';
+    ctx.fillStyle = fillColor;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(200,200,200,0.7)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = Math.max(1.5, lw);
     ctx.stroke();
   }
 
@@ -374,52 +352,72 @@ function render() {
     if (g[GR_TYPE] !== GT_HE && g[GR_TYPE] !== GT_FLASH) continue;
     const age = tick - g[GR_ST];
     if (age < 0 || age >= GREN_FADE_TICKS) continue;
-    const alpha = 1 - age / GREN_FADE_TICKS;
+    const t = age / GREN_FADE_TICKS;
+    const alpha = 1 - t;
     const [gx, gy] = w2c(g[GR_X], g[GR_Y]);
-    const maxR = r * 2.5 * (age / GREN_FADE_TICKS + 0.3);
-    const c = g[GR_TYPE] === GT_HE ? '255,160,40' : '255,255,255';
+    const maxR = r * 5 * (t * 0.75 + 0.15);
+    const c = g[GR_TYPE] === GT_HE ? '255,180,30' : '240,240,255';
+    // Bright radial fill
     const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, maxR);
-    grad.addColorStop(0,   `rgba(${c},${(alpha * 0.6).toFixed(2)})`);
-    grad.addColorStop(0.6, `rgba(${c},${(alpha * 0.3).toFixed(2)})`);
+    grad.addColorStop(0,   `rgba(${c},${(alpha * 0.95).toFixed(2)})`);
+    grad.addColorStop(0.45, `rgba(${c},${(alpha * 0.55).toFixed(2)})`);
     grad.addColorStop(1,   `rgba(${c},0)`);
     ctx.beginPath();
     ctx.arc(gx, gy, maxR, 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
+    // Expanding ring stroke for extra clarity
+    ctx.beginPath();
+    ctx.arc(gx, gy, maxR * 0.88, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${c},${(alpha * 0.8).toFixed(2)})`;
+    ctx.lineWidth = Math.max(2, lw * 2);
+    ctx.stroke();
   }
 
   // ── Active bomb ─────────────────────────────────────────────────────────────
+  // act: 0=plant_begin, 1=planted, 2=defuse_begin, 3=defused, 4=exploded, 5=dropped, 6=pickup
   const bomb = round.bomb || [];
-  if (bomb.length > 0) {
-    let lastBomb = null;
-    for (const ba of bomb) {
-      if (ba[BA_TICK] <= tick) lastBomb = ba;
-    }
-    if (lastBomb !== null) {
-      const act = lastBomb[BA_ACT];
-      const bombColors = ['#ffd700','#ffd700','#4fc3f7','#2ea043','#f85149'];
-      const bombBlink  = [true, false, true, false, false];
-      const bombColor  = bombColors[act] || '#ffd700';
-      const blink      = bombBlink[act] || false;
-      const visible    = !blink || Math.floor(tick / BOMB_FLASH_PERIOD) % 2 === 0;
-      if (visible) {
-        const [bx, by] = w2c(lastBomb[BA_X], lastBomb[BA_Y]);
-        const br = Math.max(5, Math.round(7 * sc));
-        ctx.beginPath();
-        ctx.arc(bx, by, br, 0, Math.PI * 2);
-        ctx.fillStyle = bombColor;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.lineWidth = Math.max(1, sc);
-        ctx.stroke();
-        ctx.font = `bold ${Math.max(8, Math.round(9 * sc))}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#000';
-        ctx.fillText('B', bx, by);
-        ctx.textBaseline = 'alphabetic';
-        ctx.textAlign = 'start';
+  let lastBomb = null;
+  for (const ba of bomb) {
+    if (ba[BA_TICK] <= tick) lastBomb = ba;
+  }
+  // Show bomb dot when: dropped(5), planting(0), planted(1), defusing(2), exploded(4)
+  // Hide when: picked up (6) — carrier draws the icon on the player dot instead
+  const bombVisible = lastBomb !== null && lastBomb[BA_ACT] !== 6 &&
+    !(lastBomb[BA_ACT] === 1 && false); // always show planted
+  if (bombVisible) {
+    const act = lastBomb[BA_ACT];
+    // color by state
+    const bombColors = ['#ffd700','#ffd700','#4fc3f7','#2ea043','#f85149','#e6a817','#888'];
+    const bombBlink  = [true,    false,    true,     false,    false,    true,     false];
+    const bombColor  = bombColors[act] || '#ffd700';
+    const blink      = bombBlink[act];
+    const bombVis    = !blink || Math.floor(tick / BOMB_FLASH_PERIOD) % 2 === 0;
+    if (bombVis) {
+      const [bx, by] = w2c(lastBomb[BA_X], lastBomb[BA_Y]);
+      const br = Math.max(5, Math.round(7 * sc));
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
+      ctx.fillStyle = bombColor;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = Math.max(1, sc);
+      ctx.stroke();
+      ctx.font = `bold ${Math.max(8, Math.round(9 * sc))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#000';
+      ctx.fillText('B', bx, by);
+      // Bomb timer countdown after planting (40 s = 2560 ticks)
+      if (act === 1 || act === 2) {
+        const remTicks = Math.max(0, lastBomb[BA_TICK] + 2560 - tick);
+        const remSecs = (remTicks / 64).toFixed(1);
+        ctx.fillStyle = act === 2 ? '#4fc3f7' : '#ffd700';
+        ctx.font = `bold ${Math.max(7, Math.round(8 * sc))}px sans-serif`;
+        ctx.fillText(remSecs, bx, by + br + Math.max(8, Math.round(10 * sc)));
       }
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'start';
     }
   }
 
@@ -464,6 +462,25 @@ function render() {
     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
     ctx.lineWidth   = Math.max(1, sc);
     ctx.stroke();
+
+    // C4 carrier indicator
+    if (psBomb(ps)) {
+      const br2 = Math.max(4, Math.round(5 * sc));
+      ctx.beginPath();
+      ctx.arc(cx + r * 0.7, cy - r * 0.7, br2, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd700';
+      ctx.fill();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.font = `bold ${Math.max(6, Math.round(7 * sc))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#000';
+      ctx.fillText('C', cx + r * 0.7, cy - r * 0.7);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'start';
+    }
 
     // Shoot flash
     const recentShot = shots.find(
@@ -526,33 +543,63 @@ function render() {
   document.getElementById('timeline').value = Math.round(prog * 1000);
 }
 
-// ── Kill feed ─────────────────────────────────────────────────────────────────
-let lastKillCount = -1;
+// ── Kill feed / bomb feed ─────────────────────────────────────────────────────
+let lastFeedSig = '';
+
+const BOMB_ACT_LABEL = ['Planting…','B Planted','Defusing…','B Defused','B Exploded','B Dropped','B Picked up'];
 
 function updateKillFeed(round, tick) {
-  const visible = round.kills.filter(k => k[K_TICK] <= tick).slice(-KILL_FEED_MAX).reverse();
+  // Merge kills + bomb events visible at current tick, sorted by tick.
+  const kills = (round.kills || []).filter(k => k[K_TICK] <= tick);
+  const bombEvts = (round.bomb || []).filter(ba => ba[BA_TICK] <= tick &&
+    ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5); // skip plant_begin(0) and pickup(6)
+
+  const merged = [
+    ...kills.map(k  => ({ t: k[K_TICK],  type: 'kill',  data: k  })),
+    ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb',  data: ba })),
+  ].sort((a, b) => a.t - b.t).slice(-KILL_FEED_MAX);
+
+  const sig = merged.map(e => e.t + e.type).join(',');
   const feed = document.getElementById('killfeed');
-  if (visible.length !== lastKillCount) {
-    lastKillCount = visible.length;
+  if (sig !== lastFeedSig) {
+    lastFeedSig = sig;
     feed.innerHTML = '';
-    for (const k of visible) {
-      const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
-      const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
-      const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+    for (const entry of merged.slice().reverse()) {
       const el = document.createElement('div');
-      el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
-      el.dataset.kt = k[K_TICK];
-      el.innerHTML =
-        `<span class="kf-name-atk">${esc(atkName)}</span>` +
-        `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
-        `<span class="kf-name-vic">${esc(vicName)}</span>` +
-        (k[K_HS] ? '<span class="kf-hs">HS</span>' : '');
+      el.dataset.kt = entry.t;
+      if (entry.type === 'bomb') {
+        const ba = entry.data;
+        el.className = 'kf-entry kf-bomb';
+        el.innerHTML =
+          `<div class="kf-row1">` +
+          `<span class="kf-name-atk">${esc(BOMB_ACT_LABEL[ba[BA_ACT]] || 'Bomb event')}</span>` +
+          (ba[BA_SITE] ? `<span class="kf-weapon">· Site ${esc(ba[BA_SITE])}</span>` : '') +
+          `<span class="kf-time">${roundTimeFmt(round, ba[BA_TICK])}</span>` +
+          `</div>`;
+      } else {
+        const k = entry.data;
+        const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
+        const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
+        const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+        el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
+        el.innerHTML =
+          `<div class="kf-row1">` +
+          `<span class="kf-name-atk">${esc(atkName)}</span>` +
+          `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
+          `<span class="kf-name-vic">${esc(vicName)}</span>` +
+          (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
+          `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
+          `</div>` +
+          `<div class="kf-row2">` +
+          (k[K_DMG] > 0 ? `<span class="kf-dmg">${k[K_DMG]} dmg</span>` : '') +
+          `</div>`;
+      }
       feed.appendChild(el);
     }
   }
   for (const el of feed.children) {
     const age = tick - parseInt(el.dataset.kt, 10);
-    el.style.opacity = age < 128 ? 1 : Math.max(0.3, 1 - (age - 128) / 384);
+    el.style.opacity = age < 192 ? 1 : Math.max(0.25, 1 - (age - 192) / 512);
   }
 }
 
@@ -616,24 +663,43 @@ function toggleStats() {
 }
 
 function buildStatsTable() {
+  const round = DEMO.rounds[roundIdx];
+  document.querySelector('.stats-hdr').textContent =
+    round ? 'Round ' + round.n + ' Stats' : 'Stats';
+  document.getElementById('stats-dmg-hdr').textContent = 'DMG';
+
+  const kills  = round ? (round.kills  || []) : [];
+  const dmgList = round ? (round.dmg   || []) : [];
+
+  // Aggregate per-player stats for this round
+  const pm = {}; // idx → {k, d, hs, dmg}
+  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, hs:0, dmg:0}; };
+  for (const k of kills) {
+    ensure(k[K_ATK]); ensure(k[K_VIC]);
+    pm[k[K_ATK]].k++;
+    if (k[K_HS]) pm[k[K_ATK]].hs++;
+    pm[k[K_VIC]].d++;
+  }
+  for (const [idx, dmg] of dmgList) {
+    ensure(idx);
+    pm[idx].dmg += dmg;
+  }
+
+  const entries = Object.entries(pm)
+    .map(([idx, s]) => ({ idx: +idx, s, name: (DEMO.players[+idx] || {}).name || '?' }))
+    .sort((a, b) => b.s.k - a.s.k || b.s.dmg - a.s.dmg);
+
   const tbody = document.getElementById('stats-body');
   tbody.innerHTML = '';
-  const stats = DEMO.stats || [];
-  const entries = stats
-    .map((s, i) => ({ s, i, name: (DEMO.players[i] || {}).name || '?' }))
-    .filter(e => e.s.r > 0)
-    .sort((a, b) => b.s.k - a.s.k);
-
   for (const { s, name } of entries) {
     const hsPct = s.k > 0 ? Math.round(s.hs / s.k * 100) : 0;
-    const adr   = s.r > 0 ? Math.round(s.dmg / s.r) : 0;
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td title="${esc(name)}">${esc(name)}</td>` +
       `<td style="font-weight:600">${s.k}</td>` +
       `<td>${s.d}</td>` +
       `<td>${hsPct}%</td>` +
-      `<td>${adr}</td>`;
+      `<td>${s.dmg}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -680,7 +746,7 @@ function changeRound(delta) {
   roundIdx  = next;
   framePos  = 0;
   playing   = false;
-  lastKillCount = -1;
+  lastFeedSig = '';
   updatePlayBtn();
   updateRoundLabel();
   buildEventMarks(DEMO.rounds[roundIdx]);
@@ -722,12 +788,66 @@ function toggleLevel() {
 
 function onMouseMove(e) {
   const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  if (dragging) {
+    panX = dragPanX + (e.clientX - dragStartX) * scale;
+    panY = dragPanY + (e.clientY - dragStartY) * scale;
+    clampPan();
+    if (!playing) render();
+    return;
+  }
   mousePos = {
-    x: (e.clientX - rect.left) * (canvas.width  / rect.width),
+    x: (e.clientX - rect.left) * scale,
     y: (e.clientY - rect.top)  * (canvas.height / rect.height),
   };
   if (!playing) render();
 }
+
+// ── Zoom / pan interactions ───────────────────────────────────────────────────
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  const mx = (e.clientX - rect.left) * scale;
+  const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
+  const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+  const newZoom = Math.max(1, Math.min(8, zoom * factor));
+  if (newZoom !== zoom) {
+    panX = mx - (mx - canvas.width  / 2 - panX) * (newZoom / zoom) - canvas.width  / 2;
+    panY = my - (my - canvas.height / 2 - panY) * (newZoom / zoom) - canvas.height / 2;
+    zoom = newZoom;
+    clampPan();
+    canvas.style.cursor = zoom > 1 ? 'grab' : 'crosshair';
+    if (!playing) render();
+  }
+}, { passive: false });
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0 || zoom <= 1) return;
+  dragging = true;
+  dragStartX = e.clientX; dragStartY = e.clientY;
+  dragPanX = panX; dragPanY = panY;
+  canvas.style.cursor = 'grabbing';
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragging) {
+    dragging = false;
+    canvas.style.cursor = zoom > 1 ? 'grab' : 'crosshair';
+  }
+});
+
+canvas.addEventListener('dblclick', () => {
+  zoom = 1; panX = 0; panY = 0;
+  canvas.style.cursor = 'crosshair';
+  render();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  mousePos = null;
+  tooltip.style.display = 'none';
+  if (dragging) { dragging = false; canvas.style.cursor = zoom > 1 ? 'grab' : 'crosshair'; }
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) lastTS = null;

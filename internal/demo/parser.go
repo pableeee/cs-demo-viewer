@@ -42,16 +42,17 @@ type PlayerStat struct {
 
 // Round contains all sampled frames and kills for one round.
 type Round struct {
-	Num      int          `json:"n"`
-	Winner   string       `json:"w"`              // "CT", "T", or ""
-	CTScore  int          `json:"cts"`             // CT score at START of this round
-	TScore   int          `json:"ts"`              // T score at START of this round
-	Frames   []Frame      `json:"frames"`
-	Kills    []Kill       `json:"kills"`
-	Bomb     []BombAction `json:"bomb"`
-	Grenades []Grenade    `json:"grenades"`
-	Shots    []Shot       `json:"shots"`
-	Trails   []GrenadeTrail `json:"trails,omitempty"`
+	Num       int          `json:"n"`
+	Winner    string       `json:"w"`              // "CT", "T", or ""
+	CTScore   int          `json:"cts"`             // CT score at START of this round
+	TScore    int          `json:"ts"`              // T score at START of this round
+	FreezeEnd int          `json:"fe"`              // tick when freeze time ended
+	Frames    []Frame      `json:"frames"`
+	Kills     []Kill       `json:"kills"`
+	Bomb      []BombAction `json:"bomb"`
+	Grenades  []Grenade    `json:"grenades"`
+	Shots     []Shot       `json:"shots"`
+	Dmg       [][2]int     `json:"dmg,omitempty"`  // per-player damage: [playerIdx, healthDamage]
 }
 
 // Frame is one sampled tick's snapshot of all player states.
@@ -78,7 +79,8 @@ func (ps PlayerState) MarshalJSON() ([]byte, error) {
 }
 
 // Kill is serialized as a compact JSON array:
-// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY]
+// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY, dmg]
+// dmg: total HP damage attacker dealt to victim during this round
 type Kill struct {
 	Tick   int
 	AtkIdx int
@@ -89,6 +91,7 @@ type Kill struct {
 	AtkY   int
 	VicX   int
 	VicY   int
+	DMG    int
 }
 
 func (k Kill) MarshalJSON() ([]byte, error) {
@@ -96,11 +99,11 @@ func (k Kill) MarshalJSON() ([]byte, error) {
 	if k.HS {
 		hs = 1
 	}
-	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, hs, k.AtkX, k.AtkY, k.VicX, k.VicY})
+	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, hs, k.AtkX, k.AtkY, k.VicX, k.VicY, k.DMG})
 }
 
 // BombAction is serialized as a compact JSON array: [tick, action, x, y, site]
-// action: 0=plant_begin, 1=planted, 2=defuse_begin, 3=defused, 4=exploded
+// action: 0=plant_begin, 1=planted, 2=defuse_begin, 3=defused, 4=exploded, 5=dropped, 6=pickup
 type BombAction struct {
 	Tick   int
 	Action int
@@ -114,7 +117,7 @@ func (b BombAction) MarshalJSON() ([]byte, error) {
 }
 
 // Grenade is serialized as a compact JSON array: [startTick, endTick, type, x, y]
-// type: 0=smoke, 1=flash, 2=HE, 3=molotov; endTick=0 means instant
+// type: 0=smoke, 1=flash, 2=HE, 3=molotov, 4=smoke-CT, 5=smoke-T; endTick=0 means instant
 type Grenade struct {
 	StartTick int
 	EndTick   int
@@ -137,48 +140,6 @@ func (s Shot) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]int{s.Tick, s.PIdx})
 }
 
-// GrenadeTrail is serialized as a compact JSON array: [grenType, [[frameID,x,y],...]]
-// grenType matches Grenade.Type: 0=smoke, 1=flash, 2=HE, 3=molotov
-type GrenadeTrail struct {
-	Type   int
-	Points [][3]int // [frameID, x, y]
-}
-
-func (gt GrenadeTrail) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{gt.Type, gt.Points})
-}
-
-// smokeEntry tracks an in-flight smoke grenade between SmokeStart and SmokeExpired.
-type smokeEntry struct {
-	round     *Round
-	startTick int
-	x, y      int
-}
-
-// pendingInfernoData tracks a burning molotov until we can read its fire positions.
-type pendingInfernoData struct {
-	inferno   *common.Inferno
-	round     *Round
-	startTick int
-	x, y      int
-	hasPos    bool
-}
-
-// equipToGrenadeType maps an equipment type to the Grenade.Type int constant.
-// Returns -1 for non-tracked grenade types (decoys, etc.).
-func equipToGrenadeType(t common.EquipmentType) int {
-	switch t {
-	case common.EqSmoke:
-		return 0
-	case common.EqFlash:
-		return 1
-	case common.EqHE:
-		return 2
-	case common.EqMolotov, common.EqIncendiary:
-		return 3
-	}
-	return -1
-}
 
 // Parse reads a CS2 demo from r and returns the structured DemoData.
 func Parse(r io.Reader) (*DemoData, error) {
@@ -193,11 +154,10 @@ func Parse(r io.Reader) (*DemoData, error) {
 	var roundNum int
 	var freezeEndTick int // only sample frames after freeze ends
 	var ctScore, tScore int
-	lastShot := map[int]int{} // playerIdx → last shot tick (dedup)
+	lastShot := map[int]int{}          // playerIdx → last shot tick (dedup)
+	roundVicDmg := map[int]map[int]int{} // attIdx → vicIdx → accumulated hp-dmg this round
 	var bombX, bombY int
 	var bombSite string
-	activeSmokes := map[int]smokeEntry{}
-	pendingInfernos := map[int64]*pendingInfernoData{}
 
 	// getIdx returns the Players-slice index for a player, growing the slice if needed.
 	// data.Stats is kept parallel to data.Players.
@@ -222,6 +182,11 @@ func Parse(r io.Reader) (*DemoData, error) {
 
 	captureFrame := func(tick int) Frame {
 		frame := Frame{Tick: tick}
+		bomb := p.GameState().Bomb()
+		var carrierID uint64
+		if bomb != nil && bomb.Carrier != nil {
+			carrierID = bomb.Carrier.SteamID64
+		}
 		for _, pl := range p.GameState().Participants().Playing() {
 			if pl == nil || pl.SteamID64 == 0 {
 				continue
@@ -233,6 +198,9 @@ func Parse(r io.Reader) (*DemoData, error) {
 			}
 			if !pl.IsAlive() {
 				flags++ // CT+dead=1, T+dead=3
+			}
+			if pl.SteamID64 == carrierID {
+				flags |= 4 // bomb carrier
 			}
 			frame.Players = append(frame.Players, PlayerState{
 				Idx:   getIdx(pl),
@@ -256,6 +224,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 		freezeEndTick = 0
 		inRound = true
 		lastShot = map[int]int{}
+		roundVicDmg = map[int]map[int]int{}
 	})
 
 	p.RegisterEventHandler(func(e events.RoundFreezetimeEnd) {
@@ -263,6 +232,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 			return
 		}
 		freezeEndTick = p.GameState().IngameTick()
+		cur.FreezeEnd = freezeEndTick
 	})
 
 	p.RegisterEventHandler(func(e events.RoundEnd) {
@@ -314,6 +284,10 @@ func Parse(r io.Reader) (*DemoData, error) {
 		}
 		ai := getIdx(e.Killer)
 		vi := getIdx(e.Victim)
+		var killDmg int
+		if roundVicDmg[ai] != nil {
+			killDmg = roundVicDmg[ai][vi]
+		}
 		cur.Kills = append(cur.Kills, Kill{
 			Tick:   tick,
 			AtkIdx: ai,
@@ -324,6 +298,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 			AtkY:   iround(ap.Y),
 			VicX:   iround(vp.X),
 			VicY:   iround(vp.Y),
+			DMG:    killDmg,
 		})
 		// Accumulate match stats.
 		if ai >= 0 && ai < len(data.Stats) {
@@ -345,8 +320,17 @@ func Parse(r io.Reader) (*DemoData, error) {
 			return // skip self and team damage
 		}
 		ai := getIdx(e.Attacker)
+		vi := getIdx(e.Player)
 		if ai >= 0 && ai < len(data.Stats) {
 			data.Stats[ai].DMG += e.HealthDamage
+			cur.Dmg = append(cur.Dmg, [2]int{ai, e.HealthDamage})
+		}
+		// Track per-victim damage for kill feed display.
+		if ai >= 0 && vi >= 0 {
+			if roundVicDmg[ai] == nil {
+				roundVicDmg[ai] = map[int]int{}
+			}
+			roundVicDmg[ai][vi] += e.HealthDamage
 		}
 	})
 
@@ -398,6 +382,24 @@ func Parse(r io.Reader) (*DemoData, error) {
 		cur.Bomb = append(cur.Bomb, BombAction{Tick: tick, Action: 4, X: bombX, Y: bombY, Site: bombSite})
 	})
 
+	p.RegisterEventHandler(func(e events.BombDropped) {
+		if cur == nil || e.Player == nil {
+			return
+		}
+		tick := p.GameState().IngameTick()
+		pos := e.Player.Position()
+		bombX, bombY = iround(pos.X), iround(pos.Y)
+		cur.Bomb = append(cur.Bomb, BombAction{Tick: tick, Action: 5, X: bombX, Y: bombY, Site: bombSite})
+	})
+
+	p.RegisterEventHandler(func(e events.BombPickup) {
+		if cur == nil {
+			return
+		}
+		tick := p.GameState().IngameTick()
+		cur.Bomb = append(cur.Bomb, BombAction{Tick: tick, Action: 6, X: bombX, Y: bombY, Site: bombSite})
+	})
+
 	// ── Grenade events ───────────────────────────────────────────────────────
 
 	p.RegisterEventHandler(func(e events.SmokeStart) {
@@ -405,28 +407,21 @@ func Parse(r io.Reader) (*DemoData, error) {
 			return
 		}
 		tick := p.GameState().IngameTick()
-		activeSmokes[e.GrenadeEntityID] = smokeEntry{
-			round:     cur,
-			startTick: tick,
-			x:         iround(e.Position.X),
-			y:         iround(e.Position.Y),
+		smokeType := 0 // generic / unknown team
+		if e.Thrower != nil {
+			if e.Thrower.Team == common.TeamCounterTerrorists {
+				smokeType = 4 // CT smoke
+			} else if e.Thrower.Team == common.TeamTerrorists {
+				smokeType = 5 // T smoke
+			}
 		}
-	})
-
-	p.RegisterEventHandler(func(e events.SmokeExpired) {
-		entry, ok := activeSmokes[e.GrenadeEntityID]
-		if !ok || entry.round == nil {
-			return
-		}
-		tick := p.GameState().IngameTick()
-		entry.round.Grenades = append(entry.round.Grenades, Grenade{
-			StartTick: entry.startTick,
-			EndTick:   tick,
-			Type:      0,
-			X:         entry.x,
-			Y:         entry.y,
+		cur.Grenades = append(cur.Grenades, Grenade{
+			StartTick: tick,
+			EndTick:   tick + 1152, // ~18 s at 64 ticks/s
+			Type:      smokeType,
+			X:         iround(e.Position.X),
+			Y:         iround(e.Position.Y),
 		})
-		delete(activeSmokes, e.GrenadeEntityID)
 	})
 
 	p.RegisterEventHandler(func(e events.HeExplode) {
@@ -462,50 +457,14 @@ func Parse(r io.Reader) (*DemoData, error) {
 			return
 		}
 		tick := p.GameState().IngameTick()
-		pendingInfernos[e.Inferno.UniqueID()] = &pendingInfernoData{
-			inferno:   e.Inferno,
-			round:     cur,
-			startTick: tick,
-		}
-	})
-
-	p.RegisterEventHandler(func(e events.InfernoExpired) {
-		uid := e.Inferno.UniqueID()
-		infData, ok := pendingInfernos[uid]
-		if !ok || infData.round == nil || !infData.hasPos {
-			delete(pendingInfernos, uid)
-			return
-		}
-		tick := p.GameState().IngameTick()
-		infData.round.Grenades = append(infData.round.Grenades, Grenade{
-			StartTick: infData.startTick,
-			EndTick:   tick,
+		pos := e.Inferno.Entity.Position()
+		cur.Grenades = append(cur.Grenades, Grenade{
+			StartTick: tick,
+			EndTick:   tick + 448, // ~7 s at 64 ticks/s
 			Type:      3,
-			X:         infData.x,
-			Y:         infData.y,
+			X:         iround(pos.X),
+			Y:         iround(pos.Y),
 		})
-		delete(pendingInfernos, uid)
-	})
-
-	// ── Grenade trajectory ───────────────────────────────────────────────────
-
-	p.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
-		if cur == nil || e.Projectile == nil || e.Projectile.WeaponInstance == nil {
-			return
-		}
-		gt := equipToGrenadeType(e.Projectile.WeaponInstance.Type)
-		if gt < 0 {
-			return
-		}
-		traj := e.Projectile.Trajectory2
-		if len(traj) < 2 {
-			return
-		}
-		points := make([][3]int, len(traj))
-		for i, te := range traj {
-			points[i] = [3]int{te.FrameID, iround(te.Position.X), iround(te.Position.Y)}
-		}
-		cur.Trails = append(cur.Trails, GrenadeTrail{Type: gt, Points: points})
 	})
 
 	// ── Weapon fire (deduplicated per player per SampleTicks window) ─────────
@@ -535,23 +494,6 @@ func Parse(r io.Reader) (*DemoData, error) {
 			if freezeEndTick > 0 && tick >= freezeEndTick && tick%SampleTicks == 0 {
 				if f := captureFrame(tick); len(f.Players) > 0 {
 					cur.Frames = append(cur.Frames, f)
-				}
-			}
-			// Capture inferno positions from active fire data.
-			for _, infData := range pendingInfernos {
-				if !infData.hasPos {
-					fires := infData.inferno.Fires().Active().List()
-					if len(fires) > 0 {
-						totalX, totalY := 0.0, 0.0
-						for _, f := range fires {
-							totalX += f.X
-							totalY += f.Y
-						}
-						n := len(fires)
-						infData.x = iround(totalX / float64(n))
-						infData.y = iround(totalY / float64(n))
-						infData.hasPos = true
-					}
 				}
 			}
 		}
