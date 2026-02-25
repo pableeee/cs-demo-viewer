@@ -7,7 +7,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;user-select:none}
-#hdr{padding:8px 16px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:16px;flex-shrink:0}
+#hdr{padding:8px 16px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:12px;flex-shrink:0}
 #hdr h1{font-size:15px;font-weight:600;color:#58a6ff}
 #hdr-info{font-size:12px;color:#8b949e}
 #main{flex:1;display:flex;overflow:hidden}
@@ -15,10 +15,8 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 canvas{display:block;cursor:crosshair}
 #killfeed{position:absolute;top:10px;right:10px;width:230px;pointer-events:none;display:flex;flex-direction:column;gap:3px}
 .kf-entry{background:rgba(13,17,23,0.82);border-left:3px solid #444;border-radius:0 4px 4px 0;padding:4px 7px;font-size:11px;display:flex;align-items:center;gap:5px}
-.kf-ct{border-left-color:#4fc3f7}
-.kf-t{border-left-color:#ff9800}
-.kf-name-atk{font-weight:600}
-.kf-name-vic{color:#8b949e}
+.kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}
+.kf-name-atk{font-weight:600}.kf-name-vic{color:#8b949e}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:10px}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
@@ -32,18 +30,43 @@ canvas{display:block;cursor:crosshair}
 #round-lbl{font-size:12px;min-width:80px;text-align:center;color:#e6edf3}
 #play-btn{background:#238636;border:none;color:#fff;padding:5px 14px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;min-width:70px;height:28px}
 #play-btn:hover{background:#2ea043}
-#timeline{flex:1;accent-color:#2ea043;cursor:pointer}
+#timeline{width:100%;accent-color:#2ea043;cursor:pointer;margin:0}
 .spd-btns{display:flex;gap:3px}
 .spd-btn{background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:11px}
 .spd-btn:hover{background:#30363d;color:#e6edf3}
 .spd-btn.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
 #tick-lbl{font-size:11px;color:#8b949e;min-width:90px;text-align:right}
+#event-marks{position:relative;height:4px;overflow:hidden;border-radius:2px}
+.ev-mark{position:absolute;top:0;width:2px;height:100%;border-radius:1px;pointer-events:none;transform:translateX(-50%)}
+/* Stats panel */
+#stats-panel{width:260px;background:#161b22;border-left:1px solid #30363d;overflow-y:auto;flex-shrink:0;display:none;flex-direction:column}
+#stats-panel table{width:100%;border-collapse:collapse;font-size:11px}
+#stats-panel th{padding:6px 8px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;text-align:right}
+#stats-panel th:first-child{text-align:left}
+#stats-panel td{padding:5px 8px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
+#stats-panel td:first-child{text-align:left;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+#stats-panel tr:hover td{background:rgba(255,255,255,0.04)}
+.stats-hdr{padding:8px 10px;font-size:11px;font-weight:600;color:#8b949e;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #30363d}
 </style>
 </head>
 <body>
 <div id="hdr">
   <h1 id="map-name">—</h1>
   <span id="hdr-info"></span>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:14px">
+    <div id="alive-ctr" style="font-size:13px;font-weight:600;letter-spacing:.03em">
+      <span id="ct-alive" style="color:#4fc3f7">5</span><span style="color:#555">v</span><span id="t-alive" style="color:#ff9800">5</span>
+    </div>
+    <button id="stats-btn" onclick="toggleStats()"
+      style="background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 11px;border-radius:4px;cursor:pointer;font-size:12px">
+      Stats
+    </button>
+    <div id="score" style="display:flex;gap:10px;font-size:13px;font-weight:600">
+      <span id="ct-score" style="color:#4fc3f7">CT 0</span>
+      <span style="color:#8b949e">—</span>
+      <span id="t-score" style="color:#ff9800">T 0</span>
+    </div>
+  </div>
 </div>
 <div id="main">
   <div id="canvas-wrap">
@@ -51,6 +74,18 @@ canvas{display:block;cursor:crosshair}
     <div id="killfeed"></div>
     <div id="level-btn" style="display:none" onclick="toggleLevel()">Upper</div>
     <div id="tooltip"></div>
+  </div>
+  <div id="stats-panel">
+    <div class="stats-hdr">Match Stats</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th>K</th><th>D</th><th>HS%</th><th>ADR</th>
+        </tr>
+      </thead>
+      <tbody id="stats-body"></tbody>
+    </table>
   </div>
 </div>
 <div id="controls">
@@ -60,7 +95,10 @@ canvas{display:block;cursor:crosshair}
     <button class="nav-btn" onclick="changeRound(1)">&#9654;</button>
   </div>
   <button id="play-btn" onclick="togglePlay()">&#9654; Play</button>
-  <input type="range" id="timeline" min="0" max="1000" value="0" oninput="onScrub(this.value)">
+  <div style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0">
+    <input type="range" id="timeline" min="0" max="1000" value="0" oninput="onScrub(this.value)">
+    <div id="event-marks"></div>
+  </div>
   <div class="spd-btns">
     <button class="spd-btn active" onclick="setSpeed(1,this)">1×</button>
     <button class="spd-btn" onclick="setSpeed(2,this)">2×</button>
@@ -75,33 +113,58 @@ const DEMO = /*INJECT_DATA*/;
 
 // ── Data format helpers ───────────────────────────────────────────────────────
 // PlayerState array: [idx, flags, hp, x, y, z, yaw]
-// flags: 0=CT+alive, 1=CT+dead, 2=T+alive, 3=T+dead
-const PS_IDX   = 0, PS_FLAGS = 1, PS_HP = 2;
-const PS_X     = 3, PS_Y     = 4, PS_Z  = 5, PS_YAW = 6;
-
+const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6;
 function psTeam(ps)  { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
 function psAlive(ps) { return !(ps[PS_FLAGS] & 1); }
 
 // Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY]
 const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8;
 
+// BombAction array: [tick, action, x, y, site]
+const BA_TICK=0, BA_ACT=1, BA_X=2, BA_Y=3, BA_SITE=4;
+
+// Grenade array: [startTick, endTick, type, x, y]
+const GR_ST=0, GR_ET=1, GR_TYPE=2, GR_X=3, GR_Y=4;
+const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3;
+
+// Shot array: [tick, playerIdx]
+const SH_TICK=0, SH_PIDX=1;
+
+// Trail array: [grenType, [[frameID,x,y],...]]
+const TR_TYPE=0, TR_PTS=1;
+const TR_PT_TICK=0, TR_PT_X=1, TR_PT_Y=2;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
-const RADAR_SIZE       = 1024;
-const SAMPLE_FPS       = 4;    // SampleTicks=16 at 64 tick/s → 4 keyframes/s
-const CT_COLOR         = '#4fc3f7';
-const T_COLOR          = '#ff9800';
-const DEAD_COLOR       = '#555';
-const PLAYER_R         = 8;    // base radius (scales with canvas)
-const DIR_LEN          = 18;   // direction indicator base length
-const KILL_FLASH_TICKS = 48;
-const KILL_FEED_MAX    = 6;
+const RADAR_SIZE        = 1024;
+const SAMPLE_FPS        = 4;
+const CT_COLOR          = '#4fc3f7';
+const T_COLOR           = '#ff9800';
+const DEAD_COLOR        = '#555';
+const PLAYER_R          = 8;
+const DIR_LEN           = 18;
+const KILL_FLASH_TICKS  = 48;
+const KILL_FEED_MAX     = 6;
+const SMOKE_WORLD_R     = 170;
+const MOLOTOV_WORLD_R   = 120;
+const GREN_FADE_TICKS   = 96;
+const SHOOT_FLASH_TICKS = 12;
+const BOMB_FLASH_PERIOD = 32;
+const TRAIL_FLASH_TICKS = 32; // how long the dot lingers after grenade lands
+
+const TRAIL_COLORS = [
+  'rgba(180,180,180,0.75)',  // smoke: gray
+  'rgba(200,230,255,0.80)',  // flash: light blue-white
+  'rgba(100,220,80,0.85)',   // HE: green
+  'rgba(255,100,30,0.85)',   // molotov: orange-red
+];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let roundIdx = 0;
-let framePos = 0;   // float: floor=frame index, frac=interp factor
+let framePos = 0;
 let playing  = false;
 let speed    = 1;
 let showLower = false;
+let statsOpen = false;
 let lastTS   = null;
 let rafID    = null;
 let mousePos = null;
@@ -131,6 +194,7 @@ if (DEMO.has_lower) {
   document.getElementById('level-btn').style.display = 'block';
 }
 updateRoundLabel();
+buildEventMarks(DEMO.rounds[roundIdx]);
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 canvas.addEventListener('mousemove', onMouseMove);
@@ -151,6 +215,10 @@ function w2c(wx, wy) {
   return [((wx - m.pos_x) / m.scale) * cs, ((m.pos_y - wy) / m.scale) * cs];
 }
 
+function worldRToPx(worldR) {
+  return (worldR / DEMO.meta.scale) * (canvas.width / RADAR_SIZE);
+}
+
 // ── Interpolation ─────────────────────────────────────────────────────────────
 function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -160,20 +228,14 @@ function interpPlayers(round, fp) {
   const f0 = round.frames[Math.min(fi,     round.frames.length - 1)];
   const f1 = round.frames[Math.min(fi + 1, round.frames.length - 1)];
   if (!f0) return [];
-
-  // Build map from player index → state array
   const map0 = {};
   for (const ps of f0.p) map0[ps[PS_IDX]] = ps;
-
   const src = (f1 && f1 !== f0) ? f1.p : f0.p;
   return src.map(ps1 => {
     const ps0 = map0[ps1[PS_IDX]];
     if (!ps0 || t === 0 || f0 === f1) return ps1;
-    // Return a new array with interpolated position; keep flags/hp from ps1
     return [
-      ps1[PS_IDX],
-      ps1[PS_FLAGS],
-      ps1[PS_HP],
+      ps1[PS_IDX], ps1[PS_FLAGS], ps1[PS_HP],
       Math.round(lerp(ps0[PS_X], ps1[PS_X], t)),
       Math.round(lerp(ps0[PS_Y], ps1[PS_Y], t)),
       Math.round(lerp(ps0[PS_Z], ps1[PS_Z], t)),
@@ -211,7 +273,7 @@ function render() {
   const dLen    = Math.round(DIR_LEN * sc);
   const lw      = Math.max(1.5, sc * 1.5);
 
-  // kill flashes
+  // ── Kill flashes ────────────────────────────────────────────────────────────
   for (const k of round.kills) {
     const age = tick - k[K_TICK];
     if (age < 0 || age >= KILL_FLASH_TICKS) continue;
@@ -228,8 +290,143 @@ function render() {
     ctx.fill();
   }
 
-  // players
+  // ── Grenade trails ──────────────────────────────────────────────────────────
+  const trails = round.trails || [];
+  for (const tr of trails) {
+    const pts = tr[TR_PTS];
+    if (!pts || pts.length < 2) continue;
+    const color = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,0.7)';
+
+    // Find last visible point index (frameID <= current tick)
+    let lastVisIdx = -1;
+    for (let i = 0; i < pts.length; i++) {
+      if (pts[i][TR_PT_TICK] <= tick) lastVisIdx = i; else break;
+    }
+    if (lastVisIdx < 0) continue;
+
+    // Draw dashed line through visible points
+    ctx.save();
+    ctx.setLineDash([Math.max(2, sc * 2.5), Math.max(3, sc * 3.5)]);
+    ctx.lineWidth = Math.max(1, sc * 1.5);
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    const [sx, sy] = w2c(pts[0][TR_PT_X], pts[0][TR_PT_Y]);
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i <= lastVisIdx; i++) {
+      const [px, py] = w2c(pts[i][TR_PT_X], pts[i][TR_PT_Y]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Dot at current grenade position (flashes while in flight, fades after landing)
+    const lastPt = pts[lastVisIdx];
+    const landed = lastVisIdx === pts.length - 1;
+    const ageAfterLand = landed ? (tick - lastPt[TR_PT_TICK]) : 0;
+    if (!landed || ageAfterLand < TRAIL_FLASH_TICKS) {
+      const dotAlpha = landed ? (1 - ageAfterLand / TRAIL_FLASH_TICKS) : 1;
+      const blink = !landed && Math.floor(tick / 8) % 2 === 0;
+      if (!blink) {
+        const [gx, gy] = w2c(lastPt[TR_PT_X], lastPt[TR_PT_Y]);
+        const dotR = Math.max(2.5, r * 0.45);
+        ctx.beginPath();
+        ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = color.replace(/[\d.]+\)$/, `${dotAlpha.toFixed(2)})`);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ── Active smokes ───────────────────────────────────────────────────────────
+  const grenades = round.grenades || [];
+  for (const g of grenades) {
+    if (g[GR_TYPE] !== GT_SMOKE) continue;
+    if (tick < g[GR_ST] || tick > g[GR_ET]) continue;
+    const [gx, gy] = w2c(g[GR_X], g[GR_Y]);
+    const gr = worldRToPx(SMOKE_WORLD_R);
+    ctx.beginPath();
+    ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(180,180,180,0.45)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,200,200,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // ── Molotovs ────────────────────────────────────────────────────────────────
+  for (const g of grenades) {
+    if (g[GR_TYPE] !== GT_MOLOTOV) continue;
+    if (tick < g[GR_ST] || tick > g[GR_ET]) continue;
+    const [gx, gy] = w2c(g[GR_X], g[GR_Y]);
+    const gr = worldRToPx(MOLOTOV_WORLD_R);
+    ctx.beginPath();
+    ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,90,20,0.38)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,140,40,0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // ── HE / Flash bursts ───────────────────────────────────────────────────────
+  for (const g of grenades) {
+    if (g[GR_TYPE] !== GT_HE && g[GR_TYPE] !== GT_FLASH) continue;
+    const age = tick - g[GR_ST];
+    if (age < 0 || age >= GREN_FADE_TICKS) continue;
+    const alpha = 1 - age / GREN_FADE_TICKS;
+    const [gx, gy] = w2c(g[GR_X], g[GR_Y]);
+    const maxR = r * 2.5 * (age / GREN_FADE_TICKS + 0.3);
+    const c = g[GR_TYPE] === GT_HE ? '255,160,40' : '255,255,255';
+    const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, maxR);
+    grad.addColorStop(0,   `rgba(${c},${(alpha * 0.6).toFixed(2)})`);
+    grad.addColorStop(0.6, `rgba(${c},${(alpha * 0.3).toFixed(2)})`);
+    grad.addColorStop(1,   `rgba(${c},0)`);
+    ctx.beginPath();
+    ctx.arc(gx, gy, maxR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  // ── Active bomb ─────────────────────────────────────────────────────────────
+  const bomb = round.bomb || [];
+  if (bomb.length > 0) {
+    let lastBomb = null;
+    for (const ba of bomb) {
+      if (ba[BA_TICK] <= tick) lastBomb = ba;
+    }
+    if (lastBomb !== null) {
+      const act = lastBomb[BA_ACT];
+      const bombColors = ['#ffd700','#ffd700','#4fc3f7','#2ea043','#f85149'];
+      const bombBlink  = [true, false, true, false, false];
+      const bombColor  = bombColors[act] || '#ffd700';
+      const blink      = bombBlink[act] || false;
+      const visible    = !blink || Math.floor(tick / BOMB_FLASH_PERIOD) % 2 === 0;
+      if (visible) {
+        const [bx, by] = w2c(lastBomb[BA_X], lastBomb[BA_Y]);
+        const br = Math.max(5, Math.round(7 * sc));
+        ctx.beginPath();
+        ctx.arc(bx, by, br, 0, Math.PI * 2);
+        ctx.fillStyle = bombColor;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = Math.max(1, sc);
+        ctx.stroke();
+        ctx.font = `bold ${Math.max(8, Math.round(9 * sc))}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#000';
+        ctx.fillText('B', bx, by);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'start';
+      }
+    }
+  }
+
+  // ── Players ─────────────────────────────────────────────────────────────────
+  const shots = round.shots || [];
   const hoverHits = [];
+
   for (const ps of players) {
     const team  = psTeam(ps);
     const alive = psAlive(ps);
@@ -249,7 +446,7 @@ function render() {
       continue;
     }
 
-    // direction indicator
+    // Direction indicator
     const yawRad = ps[PS_YAW] * Math.PI / 180;
     ctx.strokeStyle = 'rgba(255,255,255,0.65)';
     ctx.lineWidth   = lw;
@@ -258,7 +455,7 @@ function render() {
     ctx.lineTo(cx + Math.cos(yawRad)*dLen, cy - Math.sin(yawRad)*dLen);
     ctx.stroke();
 
-    // circle
+    // Circle
     const color = team === 'CT' ? CT_COLOR : T_COLOR;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -268,13 +465,41 @@ function render() {
     ctx.lineWidth   = Math.max(1, sc);
     ctx.stroke();
 
+    // Shoot flash
+    const recentShot = shots.find(
+      s => s[SH_PIDX] === ps[PS_IDX] && tick - s[SH_TICK] >= 0 && tick - s[SH_TICK] < SHOOT_FLASH_TICKS
+    );
+    if (recentShot) {
+      const age = tick - recentShot[SH_TICK];
+      const alpha = 1 - age / SHOOT_FLASH_TICKS;
+      const flashR = r * (1.3 + age / SHOOT_FLASH_TICKS * 1.2);
+      ctx.beginPath();
+      ctx.arc(cx, cy, flashR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,255,180,${alpha.toFixed(2)})`;
+      ctx.lineWidth = Math.max(1, lw * 1.5);
+      ctx.stroke();
+    }
+
+    // Name label
+    const name = (DEMO.players[ps[PS_IDX]] || {}).name || '?';
+    const label = name.length > 9 ? name.slice(0, 8) + '\u2026' : name;
+    const fontSize = Math.max(9, Math.round(10 * sc));
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#000';
+    ctx.fillText(label, cx + 1, cy - r - 3);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, cx, cy - r - 4);
+    ctx.textAlign = 'start';
+
     if (mousePos) {
       const dx = mousePos.x - cx, dy = mousePos.y - cy;
       if (dx*dx + dy*dy <= (r+5)*(r+5)) hoverHits.push({ps, cx, cy});
     }
   }
 
-  // tooltip
+  // Tooltip
   if (hoverHits.length > 0) {
     const {ps, cx, cy} = hoverHits[0];
     const info = DEMO.players[ps[PS_IDX]];
@@ -285,6 +510,15 @@ function render() {
   } else if (mousePos) {
     tooltip.style.display = 'none';
   }
+
+  // ── Alive counter ────────────────────────────────────────────────────────────
+  let ctAlive = 0, tAlive = 0;
+  for (const ps of players) {
+    if (!psAlive(ps)) continue;
+    if (psTeam(ps) === 'CT') ctAlive++; else tAlive++;
+  }
+  document.getElementById('ct-alive').textContent = ctAlive;
+  document.getElementById('t-alive').textContent  = tAlive;
 
   updateKillFeed(round, tick);
   document.getElementById('tick-lbl').textContent = 'tick ' + tick;
@@ -298,8 +532,6 @@ let lastKillCount = -1;
 function updateKillFeed(round, tick) {
   const visible = round.kills.filter(k => k[K_TICK] <= tick).slice(-KILL_FEED_MAX).reverse();
   const feed = document.getElementById('killfeed');
-
-  // Only rebuild DOM when the set of visible kills changes (new kill occurred or round changed).
   if (visible.length !== lastKillCount) {
     lastKillCount = visible.length;
     feed.innerHTML = '';
@@ -318,8 +550,6 @@ function updateKillFeed(round, tick) {
       feed.appendChild(el);
     }
   }
-
-  // Update opacities in-place (no DOM rebuild needed).
   for (const el of feed.children) {
     const age = tick - parseInt(el.dataset.kt, 10);
     el.style.opacity = age < 128 ? 1 : Math.max(0.3, 1 - (age - 128) / 384);
@@ -338,6 +568,74 @@ function getPlayerTeam(round, tick, pidx) {
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Timeline event markers ────────────────────────────────────────────────────
+function buildEventMarks(round) {
+  const container = document.getElementById('event-marks');
+  container.innerHTML = '';
+  if (!round || round.frames.length < 2) return;
+  const startTick = round.frames[0].tick;
+  const endTick   = round.frames[round.frames.length - 1].tick;
+  const span = endTick - startTick;
+  if (span <= 0) return;
+
+  const pct = t => (Math.max(0, Math.min(1, (t - startTick) / span)) * 100).toFixed(2) + '%';
+
+  // Kill markers
+  for (const k of (round.kills || [])) {
+    const team = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+    const el = document.createElement('div');
+    el.className = 'ev-mark';
+    el.style.left = pct(k[K_TICK]);
+    el.style.background = team === 'CT' ? CT_COLOR : T_COLOR;
+    container.appendChild(el);
+  }
+  // Bomb markers
+  const bombColors = ['#ffd700','#ffd700','#4fc3f7','#2ea043','#f85149'];
+  for (const ba of (round.bomb || [])) {
+    const el = document.createElement('div');
+    el.className = 'ev-mark';
+    el.style.left = pct(ba[BA_TICK]);
+    el.style.width = '3px';
+    el.style.background = bombColors[ba[BA_ACT]] || '#888';
+    container.appendChild(el);
+  }
+}
+
+// ── Stats panel ───────────────────────────────────────────────────────────────
+function toggleStats() {
+  statsOpen = !statsOpen;
+  const panel = document.getElementById('stats-panel');
+  const btn   = document.getElementById('stats-btn');
+  panel.style.display = statsOpen ? 'flex' : 'none';
+  btn.style.background = statsOpen ? '#1f6feb' : '#21262d';
+  btn.style.borderColor = statsOpen ? '#1f6feb' : '#30363d';
+  if (statsOpen) buildStatsTable();
+  resizeCanvas(); // refit canvas after panel opens/closes
+}
+
+function buildStatsTable() {
+  const tbody = document.getElementById('stats-body');
+  tbody.innerHTML = '';
+  const stats = DEMO.stats || [];
+  const entries = stats
+    .map((s, i) => ({ s, i, name: (DEMO.players[i] || {}).name || '?' }))
+    .filter(e => e.s.r > 0)
+    .sort((a, b) => b.s.k - a.s.k);
+
+  for (const { s, name } of entries) {
+    const hsPct = s.k > 0 ? Math.round(s.hs / s.k * 100) : 0;
+    const adr   = s.r > 0 ? Math.round(s.dmg / s.r) : 0;
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td title="${esc(name)}">${esc(name)}</td>` +
+      `<td style="font-weight:600">${s.k}</td>` +
+      `<td>${s.d}</td>` +
+      `<td>${hsPct}%</td>` +
+      `<td>${adr}</td>`;
+    tbody.appendChild(tr);
+  }
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────
@@ -385,6 +683,8 @@ function changeRound(delta) {
   lastKillCount = -1;
   updatePlayBtn();
   updateRoundLabel();
+  buildEventMarks(DEMO.rounds[roundIdx]);
+  if (statsOpen) buildStatsTable();
   render();
 }
 
@@ -393,6 +693,8 @@ function updateRoundLabel() {
   const suffix = r && r.w ? ' · ' + r.w : '';
   document.getElementById('round-lbl').textContent =
     'Round ' + (r ? r.n : roundIdx + 1) + '/' + DEMO.rounds.length + suffix;
+  document.getElementById('ct-score').textContent = 'CT ' + (r ? r.cts : 0);
+  document.getElementById('t-score').textContent  = 'T '  + (r ? r.ts  : 0);
 }
 
 function onScrub(val) {

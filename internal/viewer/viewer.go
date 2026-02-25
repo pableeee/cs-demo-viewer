@@ -17,14 +17,15 @@ var templateHTML string
 
 // ViewerData is everything the HTML template needs.
 type ViewerData struct {
-	MapName     string  `json:"map"`
-	Meta        mapMeta `json:"meta"`
-	Radar       string  `json:"radar"`       // "data:image/png;base64,..."
-	RadarLower  string  `json:"radar_lower"` // "" if no lower level
-	HasLower    bool    `json:"has_lower"`
-	LowerZMax   float64 `json:"lower_z_max"` // z threshold for lower level
-	Players     []demo.PlayerInfo `json:"players"`
-	Rounds      []demo.Round      `json:"rounds"`
+	MapName    string            `json:"map"`
+	Meta       mapMeta           `json:"meta"`
+	Radar      string            `json:"radar"`       // "data:image/png;base64,..."
+	RadarLower string            `json:"radar_lower"` // "" if no lower level
+	HasLower   bool              `json:"has_lower"`
+	LowerZMax  float64           `json:"lower_z_max"` // z threshold for lower level
+	Players    []demo.PlayerInfo `json:"players"`
+	Rounds     []demo.Round      `json:"rounds"`
+	Stats      []demo.PlayerStat `json:"stats"` // parallel to Players
 }
 
 type mapMeta struct {
@@ -45,6 +46,7 @@ func Write(w io.Writer, d *demo.DemoData, meta maps.Meta, radarPNG []byte, radar
 		Radar:    "data:image/png;base64," + base64.StdEncoding.EncodeToString(radarPNG),
 		Players:  d.Players,
 		Rounds:   d.Rounds,
+		Stats:    d.Stats,
 		HasLower: hasLower,
 	}
 	if hasLower && radarLowerPNG != nil {
