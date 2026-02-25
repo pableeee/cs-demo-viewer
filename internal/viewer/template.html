@@ -13,7 +13,9 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #main{flex:1;display:flex;overflow:hidden}
 #canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
-#killfeed{position:absolute;top:10px;right:10px;width:260px;pointer-events:none;display:flex;flex-direction:column;gap:4px;max-height:calc(100% - 20px);overflow-y:hidden}
+#killfeed{position:absolute;top:10px;right:10px;pointer-events:none;display:flex;flex-direction:row;gap:8px;align-items:flex-start;max-height:calc(100% - 20px)}
+#feed-active,#feed-passive{display:flex;flex-direction:column;gap:4px;overflow-y:hidden}
+#feed-active{width:220px}#feed-passive{width:170px}
 .kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px}
 .kf-row1{display:flex;align-items:center;gap:6px}
 .kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
@@ -81,7 +83,10 @@ canvas{display:block;cursor:crosshair}
 <div id="main">
   <div id="canvas-wrap">
     <canvas id="canvas"></canvas>
-    <div id="killfeed"></div>
+    <div id="killfeed">
+      <div id="feed-passive"></div>
+      <div id="feed-active"></div>
+    </div>
     <div id="level-btn" style="display:none" onclick="toggleLevel()">Upper</div>
     <div id="tooltip"></div>
   </div>
@@ -152,8 +157,8 @@ const SH_TICK=0, SH_PIDX=1;
 // HitEvent array: [tick, atkIdx, vicIdx, dmg, weapon]
 const HI_TICK=0, HI_ATK=1, HI_VIC=2, HI_DMG=3, HI_WEP=4;
 
-// GrenadeTrail array: [startTick, endTick, type, [[tickOffset,x,y],...]]
-const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_PTS=3;
+// GrenadeTrail array: [startTick, endTick, type, throwerIdx, [[tickOffset,x,y],...]]
+const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_THROWER=3, TR_PTS=4;
 const TR_PT_T=0, TR_PT_X=1, TR_PT_Y=2;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -352,41 +357,13 @@ function render() {
     ctx.fill();
   }
 
-  // ── Grenade throw arcs ──────────────────────────────────────────────────────
-  for (const tr of (round.trails || [])) {
-    // Only show while the grenade is in flight; disappears on landing.
-    if (tick < tr[TR_ST] || tick >= tr[TR_ET]) continue;
-    const pts = tr[TR_PTS];
-    if (!pts || pts.length < 2) continue;
-
-    // Show only points that have been reached at the current tick.
-    const elapsed = tick - tr[TR_ST];
-    let lastIdx = -1;
-    for (let i = 0; i < pts.length; i++) {
-      if (pts[i][TR_PT_T] <= elapsed) lastIdx = i; else break;
-    }
-    if (lastIdx < 0) continue;
-
-    const trailColor = TRAIL_COLORS[tr[TR_TYPE]] || 'rgba(200,200,200,1)';
-    ctx.save();
-    ctx.globalAlpha = 0.85;
-    ctx.setLineDash([Math.max(2, sc * 3), Math.max(1.5, sc * 2)]);
-    ctx.lineWidth   = Math.max(1.2, sc * 2);
-    ctx.strokeStyle = trailColor;
-    ctx.beginPath();
-    const [sx0, sy0] = w2c(pts[0][TR_PT_X], pts[0][TR_PT_Y]);
-    ctx.moveTo(sx0, sy0);
-    for (let i = 1; i <= lastIdx; i++) {
-      const [px, py] = w2c(pts[i][TR_PT_X], pts[i][TR_PT_Y]);
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
 
   // ── In-flight grenade projectiles ───────────────────────────────────────────
   for (const tr of (round.trails || [])) {
-    if (tick < tr[TR_ST] || tick >= tr[TR_ET]) continue;
+    const pts2 = tr[TR_PTS];
+    if (!pts2 || pts2.length === 0) continue;
+    const landTick2 = tr[TR_ST] + pts2[pts2.length - 1][TR_PT_T];
+    if (tick < tr[TR_ST] || tick >= landTick2) continue;
     const pos = interpTrailPos(tr, tick);
     if (!pos) continue;
     const [gx, gy] = w2c(pos[0], pos[1]);
@@ -683,92 +660,114 @@ function render() {
   document.getElementById('timeline').value = Math.round(prog * 1000);
 }
 
-// ── Kill feed / bomb feed ─────────────────────────────────────────────────────
-let lastFeedSig = '';
+// ── Kill feed ─────────────────────────────────────────────────────────────────
+// Active column (right):  kills · nade throws · bomb events
+// Passive column (left):  hits received
+let lastActiveSig = '';
+let lastPassiveSig = '';
 
 const BOMB_ACT_LABEL = ['Planting…','B Planted','Defusing…','B Defused','B Exploded','B Dropped','B Picked up'];
 
-function updateKillFeed(round, tick) {
-  // Merge kills + bomb events + nade events visible at current tick, sorted by tick.
-  const kills = (round.kills || []).filter(k => k[K_TICK] <= tick);
-  const bombEvts = (round.bomb || []).filter(ba => ba[BA_TICK] <= tick &&
-    ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5); // skip plant_begin(0) and pickup(6)
-  const nadeEvts = (round.grenades || []).filter(g => g[GR_ST] <= tick);
-  const hitEvts  = (round.hits || []).filter(h => h[HI_TICK] <= tick);
+function buildFeedEl(entry, round) {
+  const el = document.createElement('div');
+  el.dataset.kt = entry.t;
+  if (entry.type === 'bomb') {
+    const ba = entry.data;
+    el.className = 'kf-entry kf-bomb';
+    el.innerHTML =
+      `<div class="kf-row1">` +
+      `<span class="kf-name-atk">${esc(BOMB_ACT_LABEL[ba[BA_ACT]] || 'Bomb event')}</span>` +
+      (ba[BA_SITE] ? `<span class="kf-weapon">· Site ${esc(ba[BA_SITE])}</span>` : '') +
+      `<span class="kf-time">${roundTimeFmt(round, ba[BA_TICK])}</span>` +
+      `</div>`;
+  } else if (entry.type === 'nade') {
+    const tr = entry.data;
+    const label = GREN_FEED_LABELS[tr[TR_TYPE]] || 'Nade';
+    const throwerName = tr[TR_THROWER] >= 0 ? (DEMO.players[tr[TR_THROWER]] || {}).name : null;
+    el.className = 'kf-entry kf-nade';
+    el.innerHTML =
+      `<div class="kf-row1">` +
+      (throwerName ? `<span class="kf-name-atk">${esc(throwerName)}</span>` : '') +
+      `<span class="kf-weapon">${esc(label)}</span>` +
+      `<span class="kf-time">${roundTimeFmt(round, tr[TR_ST])}</span>` +
+      `</div>`;
+  } else if (entry.type === 'hit') {
+    const h = entry.data;
+    const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
+    const vicName = (DEMO.players[h[HI_VIC]] || {}).name || '?';
+    el.className = 'kf-entry kf-hit';
+    el.innerHTML =
+      `<div class="kf-row1">` +
+      `<span class="kf-name-atk">${esc(atkName)}</span>` +
+      `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
+      `<span class="kf-name-vic">${esc(vicName)}</span>` +
+      `<span class="kf-dmg">${h[HI_DMG]}</span>` +
+      `<span class="kf-time">${roundTimeFmt(round, h[HI_TICK])}</span>` +
+      `</div>`;
+  } else { // kill
+    const k = entry.data;
+    const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
+    const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
+    const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+    el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
+    el.innerHTML =
+      `<div class="kf-row1">` +
+      `<span class="kf-name-atk">${esc(atkName)}</span>` +
+      `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
+      `<span class="kf-name-vic">${esc(vicName)}</span>` +
+      (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
+      `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
+      `</div>` +
+      `<div class="kf-row2">` +
+      (k[K_DMG] > 0 ? `<span class="kf-dmg">${k[K_DMG]} dmg</span>` : '') +
+      `</div>`;
+  }
+  return el;
+}
 
-  const merged = [
-    ...kills.map(k    => ({ t: k[K_TICK],   type: 'kill', data: k  })),
-    ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
-    ...nadeEvts.map(g  => ({ t: g[GR_ST],   type: 'nade', data: g  })),
-    ...hitEvts.map(h  => ({ t: h[HI_TICK],  type: 'hit',  data: h  })),
+function updateKillFeed(round, tick) {
+  const kills     = (round.kills  || []).filter(k  => k[K_TICK]  <= tick);
+  const bombEvts  = (round.bomb   || []).filter(ba => ba[BA_TICK] <= tick && ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5);
+  const throwEvts = (round.trails || []).filter(tr => tr[TR_ST]  <= tick);
+  const hitEvts   = (round.hits   || []).filter(h  => h[HI_TICK] <= tick);
+
+  const active = [
+    ...kills.map(k      => ({ t: k[K_TICK],   type: 'kill', data: k  })),
+    ...bombEvts.map(ba  => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
+    ...throwEvts.map(tr => ({ t: tr[TR_ST],   type: 'nade', data: tr })),
   ].sort((a, b) => a.t - b.t);
 
-  const sig = merged.map(e => e.t + e.type).join(',');
-  const feed = document.getElementById('killfeed');
-  if (sig !== lastFeedSig) {
-    lastFeedSig = sig;
-    feed.innerHTML = '';
-    for (const entry of merged.slice().reverse()) {
-      const el = document.createElement('div');
-      el.dataset.kt = entry.t;
-      if (entry.type === 'bomb') {
-        const ba = entry.data;
-        el.className = 'kf-entry kf-bomb';
-        el.innerHTML =
-          `<div class="kf-row1">` +
-          `<span class="kf-name-atk">${esc(BOMB_ACT_LABEL[ba[BA_ACT]] || 'Bomb event')}</span>` +
-          (ba[BA_SITE] ? `<span class="kf-weapon">· Site ${esc(ba[BA_SITE])}</span>` : '') +
-          `<span class="kf-time">${roundTimeFmt(round, ba[BA_TICK])}</span>` +
-          `</div>`;
-      } else if (entry.type === 'nade') {
-        const g = entry.data;
-        const label = GREN_FEED_LABELS[g[GR_TYPE]] || 'Nade';
-        const throwerName = g[GR_THROWER] >= 0 ? (DEMO.players[g[GR_THROWER]] || {}).name : null;
-        el.className = 'kf-entry kf-nade';
-        el.innerHTML =
-          `<div class="kf-row1">` +
-          (throwerName ? `<span class="kf-name-atk">${esc(throwerName)}</span>` : '') +
-          `<span class="kf-weapon">${esc(label)}</span>` +
-          `<span class="kf-time">${roundTimeFmt(round, g[GR_ST])}</span>` +
-          `</div>`;
-      } else if (entry.type === 'hit') {
-        const h = entry.data;
-        const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
-        const vicName = (DEMO.players[h[HI_VIC]] || {}).name || '?';
-        el.className = 'kf-entry kf-hit';
-        el.innerHTML =
-          `<div class="kf-row1">` +
-          `<span class="kf-name-atk">${esc(atkName)}</span>` +
-          `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
-          `<span class="kf-name-vic">${esc(vicName)}</span>` +
-          `<span class="kf-dmg">${h[HI_DMG]}</span>` +
-          `<span class="kf-time">${roundTimeFmt(round, h[HI_TICK])}</span>` +
-          `</div>`;
-      } else {
-        const k = entry.data;
-        const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
-        const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
-        const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
-        el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
-        el.innerHTML =
-          `<div class="kf-row1">` +
-          `<span class="kf-name-atk">${esc(atkName)}</span>` +
-          `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
-          `<span class="kf-name-vic">${esc(vicName)}</span>` +
-          (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
-          `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
-          `</div>` +
-          `<div class="kf-row2">` +
-          (k[K_DMG] > 0 ? `<span class="kf-dmg">${k[K_DMG]} dmg</span>` : '') +
-          `</div>`;
-      }
-      feed.appendChild(el);
+  const passive = hitEvts
+    .map(h => ({ t: h[HI_TICK], type: 'hit', data: h }))
+    .sort((a, b) => a.t - b.t);
+
+  const activeSig  = active.map(e  => e.t + e.type).join(',');
+  const passiveSig = passive.map(e => e.t + e.type).join(',');
+
+  const activeEl  = document.getElementById('feed-active');
+  const passiveEl = document.getElementById('feed-passive');
+
+  if (activeSig !== lastActiveSig) {
+    lastActiveSig = activeSig;
+    activeEl.innerHTML = '';
+    for (const entry of active.slice().reverse())
+      activeEl.appendChild(buildFeedEl(entry, round));
+  }
+  if (passiveSig !== lastPassiveSig) {
+    lastPassiveSig = passiveSig;
+    passiveEl.innerHTML = '';
+    for (const entry of passive.slice().reverse())
+      passiveEl.appendChild(buildFeedEl(entry, round));
+  }
+
+  const fade = col => {
+    for (const el of col.children) {
+      const age = tick - parseInt(el.dataset.kt, 10);
+      el.style.opacity = age < 192 ? 1 : Math.max(0.25, 1 - (age - 192) / 512);
     }
-  }
-  for (const el of feed.children) {
-    const age = tick - parseInt(el.dataset.kt, 10);
-    el.style.opacity = age < 192 ? 1 : Math.max(0.25, 1 - (age - 192) / 512);
-  }
+  };
+  fade(activeEl);
+  fade(passiveEl);
 }
 
 function getPlayerTeam(round, tick, pidx) {
@@ -914,7 +913,7 @@ function changeRound(delta) {
   roundIdx  = next;
   framePos  = 0;
   playing   = false;
-  lastFeedSig = '';
+  lastActiveSig = ''; lastPassiveSig = '';
   updatePlayBtn();
   updateRoundLabel();
   buildEventMarks(DEMO.rounds[roundIdx]);

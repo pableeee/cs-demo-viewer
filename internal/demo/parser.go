@@ -157,17 +157,18 @@ func (h HitEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]any{h.Tick, h.AtkIdx, h.VicIdx, h.DMG, h.Weapon})
 }
 
-// GrenadeTrail is the throw arc of a grenade, serialized as: [startTick, endTick, type, [[tickOffset,x,y],...]]
+// GrenadeTrail is the throw arc of a grenade, serialized as: [startTick, endTick, type, throwerIdx, [[tickOffset,x,y],...]]
 // tickOffset is the elapsed ticks from startTick at each sampled point.
 type GrenadeTrail struct {
-	StartTick int
-	EndTick   int
-	Type      int
-	Points    [][3]int // [tickOffset, x, y]
+	StartTick  int
+	EndTick    int
+	Type       int
+	ThrowerIdx int
+	Points     [][3]int // [tickOffset, x, y]
 }
 
 func (gt GrenadeTrail) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{gt.StartTick, gt.EndTick, gt.Type, gt.Points})
+	return json.Marshal([]any{gt.StartTick, gt.EndTick, gt.Type, gt.ThrowerIdx, gt.Points})
 }
 
 // equipToGrenadeType maps equipment type to the Grenade type constant.
@@ -203,7 +204,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 	var ctScore, tScore int
 	lastShot := map[int]int{}            // playerIdx → last shot tick (dedup)
 	roundVicDmg := map[int]map[int]int{} // attIdx → vicIdx → accumulated hp-dmg this round
-	pendingThrows := map[int64]int{}     // grenade uniqueID → throw tick
+	pendingThrows := map[int64]struct{ tick, throwerIdx int }{} // grenade uniqueID → throw info
 	lastMolotovThrowerIdx := -1          // thrower of the most recent molotov projectile (for InfernoStart)
 	var bombX, bombY int
 	var bombSite string
@@ -275,7 +276,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 		inRound = true
 		lastShot = map[int]int{}
 		roundVicDmg = map[int]map[int]int{}
-		pendingThrows = map[int64]int{}
+		pendingThrows = map[int64]struct{ tick, throwerIdx int }{}
 		lastMolotovThrowerIdx = -1
 	})
 
@@ -538,7 +539,11 @@ func Parse(r io.Reader) (*DemoData, error) {
 		if cur == nil || e.Projectile == nil {
 			return
 		}
-		pendingThrows[e.Projectile.UniqueID()] = p.GameState().IngameTick()
+		pi := -1
+		if e.Projectile.Thrower != nil {
+			pi = getIdx(e.Projectile.Thrower)
+		}
+		pendingThrows[e.Projectile.UniqueID()] = struct{ tick, throwerIdx int }{p.GameState().IngameTick(), pi}
 	})
 
 	p.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
@@ -562,11 +567,12 @@ func Parse(r io.Reader) (*DemoData, error) {
 			lastMolotovThrowerIdx = getIdx(e.Projectile.Thrower)
 		}
 		uid := e.Projectile.UniqueID()
-		startTick, ok := pendingThrows[uid]
+		info, ok := pendingThrows[uid]
 		if !ok {
 			return // no recorded throw, skip
 		}
 		delete(pendingThrows, uid)
+		startTick := info.tick
 		traj := e.Projectile.Trajectory2
 		if len(traj) < 2 {
 			return
@@ -595,10 +601,11 @@ func Parse(r io.Reader) (*DemoData, error) {
 			points = append(points, [3]int{lastOff, iround(last.Position.X), iround(last.Position.Y)})
 		}
 		cur.Trails = append(cur.Trails, GrenadeTrail{
-			StartTick: startTick,
-			EndTick:   p.GameState().IngameTick(),
-			Type:      gt,
-			Points:    points,
+			StartTick:  startTick,
+			EndTick:    p.GameState().IngameTick(),
+			Type:       gt,
+			ThrowerIdx: info.throwerIdx,
+			Points:     points,
 		})
 	})
 
