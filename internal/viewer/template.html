@@ -362,16 +362,27 @@ function render() {
   for (const tr of (round.trails || [])) {
     const pts2 = tr[TR_PTS];
     if (!pts2 || pts2.length < 2) continue;
-    // Find when the grenade stopped moving (last point with significant displacement).
-    // Trajectory data can include stationary points long after landing (e.g. smoke entity
-    // persisting for 18 s), so we can't just use the last point.
+    // Velocity-based landing: last trajectory point with significant displacement.
+    // Used as fallback and as an anchor for event-based matching below.
     let landIdx = 0;
     for (let i = 1; i < pts2.length; i++) {
       const dx = pts2[i][TR_PT_X] - pts2[i-1][TR_PT_X];
       const dy = pts2[i][TR_PT_Y] - pts2[i-1][TR_PT_Y];
       if (dx*dx + dy*dy >= 9) landIdx = i;
     }
-    const landTick2 = tr[TR_ST] + pts2[landIdx][TR_PT_T];
+    let landTick2 = tr[TR_ST] + pts2[landIdx][TR_PT_T];
+    // For HE and flash, the trajectory entity can persist after detonation.
+    // Use the authoritative detonation tick from round.grenades instead.
+    if (tr[TR_TYPE] === GT_HE || tr[TR_TYPE] === GT_FLASH) {
+      let bestDet = null, bestDiff = Infinity;
+      for (const g of (round.grenades || [])) {
+        if (g[GR_TYPE] !== tr[TR_TYPE] || g[GR_THROWER] !== tr[TR_THROWER]) continue;
+        if (g[GR_ST] < tr[TR_ST]) continue;
+        const diff = Math.abs(g[GR_ST] - landTick2);
+        if (diff < bestDiff) { bestDiff = diff; bestDet = g; }
+      }
+      if (bestDet) landTick2 = bestDet[GR_ST];
+    }
     if (tick < tr[TR_ST] || tick >= landTick2) continue;
     const pos = interpTrailPos(tr, tick);
     if (!pos) continue;
