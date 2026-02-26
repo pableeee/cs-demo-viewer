@@ -27,7 +27,7 @@ canvas{display:block;cursor:crosshair}
 .ico-hs{color:#f85149}.ico-ns{color:#d29922}.ico-sm{color:#8b949e}.ico-bl{color:#f0c000}.ico-fa{color:#e8e870}
 .kf-time{color:#6e7681;font-size:10px;margin-left:auto}
 /* Health panel */
-#health-panel{width:200px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
+#health-panel{width:240px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
 .hp-side{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .hp-side-hdr{padding:4px 8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #30363d;flex-shrink:0}
 .hp-row{display:flex;flex-direction:column;gap:2px;padding:3px 8px;border-bottom:1px solid #21262d}
@@ -62,17 +62,8 @@ canvas{display:block;cursor:crosshair}
 #tick-lbl{font-size:11px;color:#8b949e;min-width:90px;text-align:right}
 #event-marks{position:relative;height:4px;overflow:hidden;border-radius:2px}
 .ev-mark{position:absolute;top:0;width:2px;height:100%;border-radius:1px;pointer-events:none;transform:translateX(-50%)}
-/* Stats panel */
-#stats-panel{width:340px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:none;flex-direction:column}
-.stats-side{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.stats-side-hdr{padding:4px 8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #30363d}
-.stats-mini-tbl{width:100%;border-collapse:collapse;font-size:11px}
-.stats-mini-tbl th{padding:4px 5px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;text-align:right}
-.stats-mini-tbl th:first-child{text-align:left}
-.stats-mini-tbl td{padding:4px 5px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
-.stats-mini-tbl td:first-child{text-align:left;max-width:90px;overflow:hidden;text-overflow:ellipsis}
-.stats-mini-tbl tr:hover td{background:rgba(255,255,255,0.04)}
-.stats-hdr{padding:8px 10px;font-size:11px;font-weight:600;color:#8b949e;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #30363d}
+.hp-rnd-stats{font-size:10px;margin-left:auto;flex-shrink:0;display:flex;gap:5px;font-variant-numeric:tabular-nums}
+.hp-rnd-k{color:#7ee787;font-weight:600}.hp-rnd-d{color:#f85149}.hp-rnd-dmg{color:#6e7681}
 </style>
 </head>
 <body>
@@ -87,11 +78,7 @@ canvas{display:block;cursor:crosshair}
       <div id="round-timer" style="font-size:17px;font-weight:700;color:#e6edf3;letter-spacing:.04em;font-variant-numeric:tabular-nums;line-height:1">1:55</div>
       <div id="c4-timer" style="font-size:12px;font-weight:700;color:#ffd700;letter-spacing:.04em;font-variant-numeric:tabular-nums;display:none">C4 0:40.0</div>
     </div>
-    <button id="stats-btn" onclick="toggleStats()"
-      style="background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 11px;border-radius:4px;cursor:pointer;font-size:12px">
-      Stats
-    </button>
-    <div id="score" style="display:flex;gap:10px;font-size:13px;font-weight:600">
+<div id="score" style="display:flex;gap:10px;font-size:13px;font-weight:600">
       <span id="ct-score" style="color:#4fc3f7">CT 0</span>
       <span style="color:#8b949e">—</span>
       <span id="t-score" style="color:#ff9800">T 0</span>
@@ -113,25 +100,6 @@ canvas{display:block;cursor:crosshair}
     <div class="hp-side">
       <div class="hp-side-hdr" style="color:#ff9800">T</div>
       <div id="hp-t"></div>
-    </div>
-  </div>
-  <div id="stats-panel">
-    <div class="stats-hdr" id="stats-round-hdr">Round Stats</div>
-    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
-      <div class="stats-side">
-        <div class="stats-side-hdr" style="color:#4fc3f7">CT</div>
-        <table class="stats-mini-tbl">
-          <thead><tr><th>Player</th><th>K</th><th>D</th><th>DMG</th></tr></thead>
-          <tbody id="stats-ct-body"></tbody>
-        </table>
-      </div>
-      <div class="stats-side" style="border-left:1px solid #30363d">
-        <div class="stats-side-hdr" style="color:#ff9800">T</div>
-        <table class="stats-mini-tbl">
-          <thead><tr><th>Player</th><th>K</th><th>D</th><th>DMG</th></tr></thead>
-          <tbody id="stats-t-body"></tbody>
-        </table>
-      </div>
     </div>
   </div>
 </div>
@@ -229,7 +197,6 @@ let framePos = 0;
 let playing  = false;
 let speed    = 1;
 let showLower = false;
-let statsOpen = false;
 let lastTS   = null;
 let rafID    = null;
 let mousePos = null;
@@ -885,6 +852,21 @@ function updateHealthPanel(players, round) {
   const tEl  = document.getElementById('hp-t');
   if (!ctEl || !tEl) return;
 
+  // Aggregate per-player round stats
+  const pm = {};
+  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, dmg:0}; };
+  if (round) {
+    for (const k of (round.kills || [])) {
+      ensure(k[K_ATK]); ensure(k[K_VIC]);
+      pm[k[K_ATK]].k++;
+      pm[k[K_VIC]].d++;
+    }
+    for (const [idx, dmg] of (round.dmg || [])) {
+      ensure(idx);
+      pm[idx].dmg += dmg;
+    }
+  }
+
   const ct = [], t = [];
   for (const ps of players) {
     (psTeam(ps) === 'CT' ? ct : t).push(ps);
@@ -925,15 +907,17 @@ function updateHealthPanel(players, round) {
         if ((u>>5) & 1)  dots += '<span class="ud ud-decoy" title="Decoy"></span>';
         if (dots) utilHtml = `<span class="hp-util">${dots}</span>`;
       }
-      const wepHtml = alive
-        ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}</div>`
-        : '';
+      const st = pm[ps[PS_IDX]] || {k:0, d:0, dmg:0};
+      const statsHtml = `<span class="hp-rnd-stats"><span class="hp-rnd-k">${st.k}k</span><span class="hp-rnd-d">${st.d}d</span><span class="hp-rnd-dmg">${st.dmg}</span></span>`;
+      const subHtml = alive
+        ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}${statsHtml}</div>`
+        : `<div class="hp-sub">${statsHtml}</div>`;
       row.innerHTML =
         `<div class="hp-main">` +
         `<span class="hp-name" style="color:${nameColor}" title="${esc(name)}">${esc(name)}</span>` +
         `<div class="hp-bar-wrap"><div class="hp-bar" style="width:${hpPct};background:${barColor}"></div></div>` +
         `<span class="hp-val" style="color:${nameColor}">${alive ? hp : '✕'}</span>` +
-        `</div>` + wepHtml;
+        `</div>` + subHtml;
     });
   };
 
@@ -976,72 +960,6 @@ function buildEventMarks(round) {
     el.style.background = bombColors[ba[BA_ACT]] || '#888';
     container.appendChild(el);
   }
-}
-
-// ── Stats panel ───────────────────────────────────────────────────────────────
-function toggleStats() {
-  statsOpen = !statsOpen;
-  const panel = document.getElementById('stats-panel');
-  const btn   = document.getElementById('stats-btn');
-  panel.style.display = statsOpen ? 'flex' : 'none';
-  btn.style.background = statsOpen ? '#1f6feb' : '#21262d';
-  btn.style.borderColor = statsOpen ? '#1f6feb' : '#30363d';
-  if (statsOpen) buildStatsTable();
-  resizeCanvas(); // refit canvas after panel opens/closes
-}
-
-function buildStatsTable() {
-  const round = DEMO.rounds[roundIdx];
-  document.getElementById('stats-round-hdr').textContent =
-    round ? 'Round ' + round.n + ' Stats' : 'Stats';
-
-  const kills   = round ? (round.kills || []) : [];
-  const dmgList = round ? (round.dmg   || []) : [];
-
-  // Get team assignments from first frame
-  const teamMap = {};
-  if (round && round.frames.length > 0) {
-    for (const ps of round.frames[0].p) {
-      teamMap[ps[PS_IDX]] = psTeam(ps);
-    }
-  }
-
-  // Aggregate per-player stats
-  const pm = {}; // idx → {k, d, dmg}
-  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, dmg:0}; };
-  // Seed all known players so everyone appears even with 0 stats
-  for (const idx of Object.keys(teamMap)) ensure(+idx);
-  for (const k of kills) {
-    ensure(k[K_ATK]); ensure(k[K_VIC]);
-    pm[k[K_ATK]].k++;
-    pm[k[K_VIC]].d++;
-  }
-  for (const [idx, dmg] of dmgList) {
-    ensure(idx);
-    pm[idx].dmg += dmg;
-  }
-
-  const fillBody = (tbodyId, side) => {
-    const entries = Object.entries(pm)
-      .filter(([idx]) => (teamMap[idx] || 'CT') === side)
-      .map(([idx, s]) => ({ idx: +idx, s, name: (DEMO.players[+idx] || {}).name || '?' }))
-      .sort((a, b) => b.s.k - a.s.k || b.s.dmg - a.s.dmg);
-    const tbody = document.getElementById(tbodyId);
-    tbody.innerHTML = '';
-    const nameColor = side === 'CT' ? CT_COLOR : T_COLOR;
-    for (const { s, name } of entries) {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td title="${esc(name)}" style="color:${nameColor}">${esc(name)}</td>` +
-        `<td style="font-weight:600">${s.k}</td>` +
-        `<td>${s.d}</td>` +
-        `<td>${s.dmg}</td>`;
-      tbody.appendChild(tr);
-    }
-  };
-
-  fillBody('stats-ct-body', 'CT');
-  fillBody('stats-t-body', 'T');
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────
@@ -1091,7 +1009,6 @@ function changeRound(delta) {
   updatePlayBtn();
   updateRoundLabel();
   buildEventMarks(DEMO.rounds[roundIdx]);
-  if (statsOpen) buildStatsTable();
   render();
 }
 
