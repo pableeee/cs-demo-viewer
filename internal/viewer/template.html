@@ -11,7 +11,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #hdr h1{font-size:15px;font-weight:600;color:#58a6ff}
 #hdr-info{font-size:12px;color:#8b949e}
 #main{flex:1;display:flex;overflow:hidden}
-#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:flex-start;background:#0d1117;position:relative;overflow:hidden}
+#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
 #killfeed{position:absolute;top:10px;right:10px;pointer-events:none;width:260px;max-height:calc(100% - 20px);display:flex;flex-direction:column;gap:4px;overflow:clip}
 .kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;overflow:clip;max-width:100%}
@@ -176,7 +176,6 @@ const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3, GT_SMOKE_CT=4, GT_SMOKE_T=5
 // Shot array: [tick, playerIdx]
 const SH_TICK=0, SH_PIDX=1;
 
-/
 // GrenadeTrail array: [startTick, endTick, type, throwerIdx, [[tickOffset,x,y],...]]
 const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_THROWER=3, TR_PTS=4;
 const TR_PT_T=0, TR_PT_X=1, TR_PT_Y=2;
@@ -814,13 +813,8 @@ function updateHealthPanel(players, round) {
   for (const ps of players) {
     (psTeam(ps) === 'CT' ? ct : t).push(ps);
   }
-  // Sort alive first, then by HP descending
-  const sortPs = arr => arr.sort((a, b) => {
-    const aAlive = psAlive(a) ? 1 : 0, bAlive = psAlive(b) ? 1 : 0;
-    if (aAlive !== bAlive) return bAlive - aAlive;
-    return b[PS_HP] - a[PS_HP];
-  });
-  sortPs(ct); sortPs(t);
+  ct.sort((a, b) => a[PS_IDX] - b[PS_IDX]);
+  t.sort((a, b) => a[PS_IDX] - b[PS_IDX]);
 
   const renderSide = (container, list) => {
     // Reuse existing rows if count matches, otherwise rebuild
