@@ -40,9 +40,8 @@ canvas{display:block;cursor:crosshair}
 .hp-wep{font-size:10px;color:#8b949e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .hp-armor{font-size:9px;font-weight:700;border-radius:3px;padding:1px 4px;flex-shrink:0}
 .hp-armor-kh{color:#7ee787;background:#0d2414}.hp-armor-k{color:#d29922;background:#2a2000}
-.hp-util{display:flex;gap:2px;flex-shrink:0}
-.ud{width:7px;height:7px;border-radius:1px;flex-shrink:0}
-.ud-smoke{background:#8b949e}.ud-he{background:#7ee787}.ud-flash{background:#f0e030}.ud-molotov{background:#ff9800}.ud-decoy{background:#6e7681}
+.hp-util{display:flex;gap:3px;flex-shrink:0;align-items:center}
+.hp-uico{display:inline-flex;align-items:center;flex-shrink:0}.hp-uico svg{display:block;height:9px;width:auto}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -62,7 +61,7 @@ canvas{display:block;cursor:crosshair}
 #tick-lbl{font-size:11px;color:#8b949e;min-width:90px;text-align:right}
 #event-marks{position:relative;height:4px;overflow:hidden;border-radius:2px}
 .ev-mark{position:absolute;top:0;width:2px;height:100%;border-radius:1px;pointer-events:none;transform:translateX(-50%)}
-.hp-rnd-stats{font-size:10px;margin-left:auto;flex-shrink:0;display:flex;gap:5px;font-variant-numeric:tabular-nums}
+.hp-rnd-stats{font-size:10px;flex-shrink:0;display:flex;gap:5px;font-variant-numeric:tabular-nums}
 .hp-rnd-k{color:#7ee787;font-weight:600}.hp-rnd-d{color:#f85149}.hp-rnd-dmg{color:#6e7681}
 </style>
 </head>
@@ -898,20 +897,22 @@ function updateHealthPanel(players, round) {
       let utilHtml = '';
       if (alive) {
         const u = ps[PS_UTIL] || 0;
+        const ui = (svg, color, title) => `<span class="hp-uico" style="color:${color}" title="${title}">${svg}</span>`;
         let dots = '';
-        if (u & 1)       dots += '<span class="ud ud-smoke" title="Smoke"></span>';
-        if ((u>>1) & 1)  dots += '<span class="ud ud-he" title="HE"></span>';
+        if (u & 1)       dots += ui(WEP_SVGS.smoke,   '#8b949e', 'Smoke');
+        if ((u>>1) & 1)  dots += ui(WEP_SVGS.he,      '#7ee787', 'HE');
         const fl = (u >> 2) & 3;
-        for (let f = 0; f < fl; f++) dots += '<span class="ud ud-flash" title="Flash"></span>';
-        if ((u>>4) & 1)  dots += '<span class="ud ud-molotov" title="Molotov"></span>';
-        if ((u>>5) & 1)  dots += '<span class="ud ud-decoy" title="Decoy"></span>';
+        for (let f = 0; f < fl; f++) dots += ui(WEP_SVGS.flash, '#f0e030', 'Flash');
+        if ((u>>4) & 1)  dots += ui(WEP_SVGS.molotov, '#ff9800', 'Molotov');
+        if ((u>>5) & 1)  dots += ui(WEP_SVGS.decoy,   '#6e7681', 'Decoy');
         if (dots) utilHtml = `<span class="hp-util">${dots}</span>`;
       }
       const st = pm[ps[PS_IDX]] || {k:0, d:0, dmg:0};
-      const statsHtml = `<span class="hp-rnd-stats"><span class="hp-rnd-k">${st.k}k</span><span class="hp-rnd-d">${st.d}d</span><span class="hp-rnd-dmg">${st.dmg}</span></span>`;
-      const subHtml = alive
-        ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}${statsHtml}</div>`
-        : `<div class="hp-sub">${statsHtml}</div>`;
+      const statsRow = `<div class="hp-sub"><span class="hp-rnd-stats"><span class="hp-rnd-k">${st.k}k</span><span class="hp-rnd-d">${st.d}d</span><span class="hp-rnd-dmg">${st.dmg}</span></span></div>`;
+      const wepRow = alive
+        ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}</div>`
+        : '';
+      const subHtml = wepRow + statsRow;
       row.innerHTML =
         `<div class="hp-main">` +
         `<span class="hp-name" style="color:${nameColor}" title="${esc(name)}">${esc(name)}</span>` +
