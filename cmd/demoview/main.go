@@ -13,6 +13,20 @@ import (
 	"github.com/pable/cs-demo-viewer/internal/viewer"
 )
 
+// uniqueOutPath returns outDir/base.html, or outDir/base_2.html etc. if the file already exists.
+func uniqueOutPath(outDir, base string) string {
+	p := filepath.Join(outDir, base+".html")
+	if _, err := os.Stat(p); err != nil {
+		return p // doesn't exist yet
+	}
+	for n := 2; ; n++ {
+		p = filepath.Join(outDir, fmt.Sprintf("%s_%d.html", base, n))
+		if _, err := os.Stat(p); err != nil {
+			return p
+		}
+	}
+}
+
 func main() {
 	out := flag.String("o", "", "output file (single mode) or output directory (dir mode); default: alongside input")
 	dir := flag.String("dir", "", "process all .dem files in this directory")
@@ -107,8 +121,13 @@ func processDemoFile(demoFile, outDir string, bulk bool) error {
 
 	var outputFile string
 	if bulk {
-		base := strings.TrimSuffix(filepath.Base(demoFile), ".dem")
-		outputFile = filepath.Join(outDir, base+"_"+d.MapName+".html")
+		fi, err := os.Stat(demoFile)
+		if err != nil {
+			return fmt.Errorf("stat: %w", err)
+		}
+		date := fi.ModTime().Format("2006-01-02")
+		base := date + "_" + d.MapName
+		outputFile = uniqueOutPath(outDir, base)
 	} else {
 		outputFile = outDir // outDir holds the exact path in single mode
 	}
