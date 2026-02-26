@@ -13,20 +13,26 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #main{flex:1;display:flex;overflow:hidden}
 #canvas-wrap{flex:1;display:flex;align-items:center;justify-content:flex-start;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
-#killfeed{position:absolute;top:10px;right:10px;pointer-events:none;display:flex;flex-direction:row;gap:8px;align-items:flex-start;max-height:calc(100% - 20px);overflow:clip}
-#feed-active{width:280px;display:flex;flex-direction:column;gap:4px;overflow:clip}
-#feed-passive{width:200px;display:flex;flex-direction:column;gap:4px;overflow:clip}
+#killfeed{position:absolute;top:10px;right:10px;pointer-events:none;width:260px;max-height:calc(100% - 20px);display:flex;flex-direction:column;gap:4px;overflow:clip}
 .kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;overflow:clip;max-width:100%}
-.kf-row1{display:flex;align-items:center;gap:6px;overflow:clip;max-width:100%}
-.kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
+.kf-row1{display:flex;align-items:center;gap:5px;overflow:clip;max-width:100%}
+.kf-row2{font-size:10px;color:#8b949e;display:flex;gap:5px;align-items:center}
 .kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
-.kf-name-atk{font-weight:700;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
+.kf-name-atk{font-weight:700;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
+.kf-asst{font-size:10px;color:#8b949e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
+.kf-flash{color:#e8e870;font-size:9px;background:#2a2a0a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:11px}
-.kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
 .kf-time{color:#6e7681;font-size:10px;margin-left:auto}
-.kf-nade{border-left-color:#7ee787}
-.kf-hit{border-left-color:#555}
+/* Health panel */
+#health-panel{width:200px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
+.hp-side{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.hp-side-hdr{padding:4px 8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #30363d;flex-shrink:0}
+.hp-row{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid #21262d}
+.hp-name{font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0;width:70px}
+.hp-bar-wrap{flex:1;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
+.hp-bar{height:100%;border-radius:3px;transition:width 0.1s}
+.hp-val{font-size:10px;font-weight:600;min-width:26px;text-align:right;flex-shrink:0}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -85,12 +91,19 @@ canvas{display:block;cursor:crosshair}
 <div id="main">
   <div id="canvas-wrap">
     <canvas id="canvas"></canvas>
-    <div id="killfeed">
-      <div id="feed-passive"></div>
-      <div id="feed-active"></div>
-    </div>
+    <div id="killfeed"></div>
     <div id="level-btn" style="display:none" onclick="toggleLevel()">Upper</div>
     <div id="tooltip"></div>
+  </div>
+  <div id="health-panel">
+    <div class="hp-side" style="border-bottom:1px solid #30363d">
+      <div class="hp-side-hdr" style="color:#4fc3f7">CT</div>
+      <div id="hp-ct"></div>
+    </div>
+    <div class="hp-side">
+      <div class="hp-side-hdr" style="color:#ff9800">T</div>
+      <div id="hp-t"></div>
+    </div>
   </div>
   <div id="stats-panel">
     <div class="stats-hdr" id="stats-round-hdr">Round Stats</div>
@@ -150,8 +163,8 @@ function roundTimeFmt(round, tick) {
   return Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
 }
 
-// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY, dmg]
-const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_DMG=9;
+// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1)]
+const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_ASST=9,K_FASST=10;
 
 // BombAction array: [tick, action, x, y, site]
 const BA_TICK=0, BA_ACT=1, BA_X=2, BA_Y=3, BA_SITE=4;
@@ -163,9 +176,7 @@ const GT_SMOKE=0, GT_FLASH=1, GT_HE=2, GT_MOLOTOV=3, GT_SMOKE_CT=4, GT_SMOKE_T=5
 // Shot array: [tick, playerIdx]
 const SH_TICK=0, SH_PIDX=1;
 
-// HitEvent array: [tick, atkIdx, vicIdx, dmg, weapon]
-const HI_TICK=0, HI_ATK=1, HI_VIC=2, HI_DMG=3, HI_WEP=4;
-
+/
 // GrenadeTrail array: [startTick, endTick, type, throwerIdx, [[tickOffset,x,y],...]]
 const TR_ST=0, TR_ET=1, TR_TYPE=2, TR_THROWER=3, TR_PTS=4;
 const TR_PT_T=0, TR_PT_X=1, TR_PT_Y=2;
@@ -685,16 +696,14 @@ function render() {
   }
 
   updateKillFeed(round, tick);
+  updateHealthPanel(players, round);
   document.getElementById('tick-lbl').textContent = rtEl.textContent;
   const prog = round.frames.length > 1 ? framePos / (round.frames.length - 1) : 0;
   document.getElementById('timeline').value = Math.round(prog * 1000);
 }
 
 // ── Kill feed ─────────────────────────────────────────────────────────────────
-// Active column (right):  kills · nade throws · bomb events
-// Passive column (left):  hits received
-let lastActiveSig = '';
-let lastPassiveSig = '';
+let lastFeedSig = '';
 
 const BOMB_ACT_LABEL = ['Planting…','B Planted','Defusing…','B Defused','B Exploded','B Dropped','B Picked up'];
 
@@ -707,7 +716,7 @@ function buildFeedEl(entry, round) {
     el.innerHTML =
       `<div class="kf-row1">` +
       `<span class="kf-name-atk">${esc(BOMB_ACT_LABEL[ba[BA_ACT]] || 'Bomb event')}</span>` +
-      (ba[BA_SITE] ? `<span class="kf-weapon">· Site ${esc(ba[BA_SITE])}</span>` : '') +
+      (ba[BA_SITE] ? `<span class="kf-weapon">· ${esc(ba[BA_SITE])}</span>` : '') +
       `<span class="kf-time">${roundTimeFmt(round, ba[BA_TICK])}</span>` +
       `</div>`;
   } else if (entry.type === 'nade') {
@@ -725,18 +734,6 @@ function buildFeedEl(entry, round) {
       `<span class="kf-weapon" style="color:${nadeColor}">${esc(label)}</span>` +
       `<span class="kf-time">${roundTimeFmt(round, tr[TR_ST])}</span>` +
       `</div>`;
-  } else if (entry.type === 'hit') {
-    const h = entry.data;
-    const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
-    const atkTeamH = getPlayerTeam(round, h[HI_TICK], h[HI_ATK]);
-    const atkColorH = atkTeamH === 'CT' ? CT_COLOR : T_COLOR;
-    el.className = 'kf-entry kf-hit';
-    el.innerHTML =
-      `<div class="kf-row1">` +
-      `<span class="kf-name-atk" style="color:${atkColorH}">${esc(atkName)}</span>` +
-      `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
-      `<span class="kf-dmg">${h[HI_DMG]}</span>` +
-      `</div>`;
   } else { // kill
     const k = entry.data;
     const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
@@ -746,6 +743,18 @@ function buildFeedEl(entry, round) {
     const atkColor = atkTeam === 'CT' ? CT_COLOR : T_COLOR;
     const vicColor = vicTeam === 'CT' ? CT_COLOR : T_COLOR;
     el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
+    let asstHtml = '';
+    if (k[K_ASST] >= 0) {
+      const asstName = (DEMO.players[k[K_ASST]] || {}).name || '?';
+      const asstTeam = getPlayerTeam(round, k[K_TICK], k[K_ASST]);
+      const asstColor = asstTeam === 'CT' ? CT_COLOR : T_COLOR;
+      asstHtml =
+        `<div class="kf-row2">` +
+        `<span style="color:#6e7681">+</span>` +
+        `<span class="kf-asst" style="color:${asstColor}">${esc(asstName)}</span>` +
+        (k[K_FASST] ? '<span class="kf-flash">flash</span>' : '<span style="color:#6e7681;font-size:10px">assist</span>') +
+        `</div>`;
+    }
     el.innerHTML =
       `<div class="kf-row1">` +
       `<span class="kf-name-atk" style="color:${atkColor}">${esc(atkName)}</span>` +
@@ -753,57 +762,36 @@ function buildFeedEl(entry, round) {
       `<span class="kf-name-vic" style="color:${vicColor}">${esc(vicName)}</span>` +
       (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
       `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
-      `</div>` +
-      `<div class="kf-row2">` +
-      (k[K_DMG] > 0 ? `<span class="kf-dmg">${k[K_DMG]} dmg</span>` : '') +
-      `</div>`;
+      `</div>` + asstHtml;
   }
   return el;
 }
 
 function updateKillFeed(round, tick) {
-  const kills     = (round.kills  || []).filter(k  => k[K_TICK]  <= tick);
-  const bombEvts  = (round.bomb   || []).filter(ba => ba[BA_TICK] <= tick && ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5);
-  const throwEvts = (round.trails || []).filter(tr => tr[TR_ST]  <= tick);
-  const hitEvts   = (round.hits   || []).filter(h  => h[HI_TICK] <= tick);
+  const kills    = (round.kills  || []).filter(k  => k[K_TICK]  <= tick);
+  const bombEvts = (round.bomb   || []).filter(ba => ba[BA_TICK] <= tick && ba[BA_ACT] >= 1 && ba[BA_ACT] <= 5);
+  const nades    = (round.trails || []).filter(tr => tr[TR_ST]  <= tick);
 
-  const active = [
-    ...kills.map(k      => ({ t: k[K_TICK],   type: 'kill', data: k  })),
-    ...bombEvts.map(ba  => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
-    ...throwEvts.map(tr => ({ t: tr[TR_ST],   type: 'nade', data: tr })),
+  const entries = [
+    ...kills.map(k     => ({ t: k[K_TICK],   type: 'kill', data: k  })),
+    ...bombEvts.map(ba => ({ t: ba[BA_TICK], type: 'bomb', data: ba })),
+    ...nades.map(tr    => ({ t: tr[TR_ST],   type: 'nade', data: tr })),
   ].sort((a, b) => a.t - b.t);
 
-  const passive = hitEvts
-    .map(h => ({ t: h[HI_TICK], type: 'hit', data: h }))
-    .sort((a, b) => a.t - b.t);
+  const sig = entries.map(e => e.t + e.type).join(',');
+  const feedEl = document.getElementById('killfeed');
 
-  const activeSig  = active.map(e  => e.t + e.type).join(',');
-  const passiveSig = passive.map(e => e.t + e.type).join(',');
-
-  const activeEl  = document.getElementById('feed-active');
-  const passiveEl = document.getElementById('feed-passive');
-
-  if (activeSig !== lastActiveSig) {
-    lastActiveSig = activeSig;
-    activeEl.innerHTML = '';
-    for (const entry of active.slice().reverse())
-      activeEl.appendChild(buildFeedEl(entry, round));
-  }
-  if (passiveSig !== lastPassiveSig) {
-    lastPassiveSig = passiveSig;
-    passiveEl.innerHTML = '';
-    for (const entry of passive.slice().reverse())
-      passiveEl.appendChild(buildFeedEl(entry, round));
+  if (sig !== lastFeedSig) {
+    lastFeedSig = sig;
+    feedEl.innerHTML = '';
+    for (const entry of entries.slice().reverse())
+      feedEl.appendChild(buildFeedEl(entry, round));
   }
 
-  const fade = col => {
-    for (const el of col.children) {
-      const age = tick - parseInt(el.dataset.kt, 10);
-      el.style.opacity = age < 192 ? 1 : Math.max(0.25, 1 - (age - 192) / 512);
-    }
-  };
-  fade(activeEl);
-  fade(passiveEl);
+  for (const el of feedEl.children) {
+    const age = tick - parseInt(el.dataset.kt, 10);
+    el.style.opacity = age < 192 ? 1 : Math.max(0.25, 1 - (age - 192) / 512);
+  }
 }
 
 function getPlayerTeam(round, tick, pidx) {
@@ -814,6 +802,51 @@ function getPlayerTeam(round, tick, pidx) {
     }
   }
   return 'CT';
+}
+
+// ── Health panel ──────────────────────────────────────────────────────────────
+function updateHealthPanel(players, round) {
+  const ctEl = document.getElementById('hp-ct');
+  const tEl  = document.getElementById('hp-t');
+  if (!ctEl || !tEl) return;
+
+  const ct = [], t = [];
+  for (const ps of players) {
+    (psTeam(ps) === 'CT' ? ct : t).push(ps);
+  }
+  // Sort alive first, then by HP descending
+  const sortPs = arr => arr.sort((a, b) => {
+    const aAlive = psAlive(a) ? 1 : 0, bAlive = psAlive(b) ? 1 : 0;
+    if (aAlive !== bAlive) return bAlive - aAlive;
+    return b[PS_HP] - a[PS_HP];
+  });
+  sortPs(ct); sortPs(t);
+
+  const renderSide = (container, list) => {
+    // Reuse existing rows if count matches, otherwise rebuild
+    if (container.children.length !== list.length) container.innerHTML = '';
+    list.forEach((ps, i) => {
+      const name  = (DEMO.players[ps[PS_IDX]] || {}).name || '?';
+      const hp    = psAlive(ps) ? Math.max(0, ps[PS_HP]) : 0;
+      const alive = psAlive(ps);
+      const hpPct = (hp / 100 * 100).toFixed(1) + '%';
+      const barColor = hp > 50 ? '#2ea043' : hp > 25 ? '#d29922' : '#f85149';
+      const nameColor = alive ? '#e6edf3' : '#555';
+      let row = container.children[i];
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'hp-row';
+        container.appendChild(row);
+      }
+      row.innerHTML =
+        `<span class="hp-name" style="color:${nameColor}" title="${esc(name)}">${esc(name)}</span>` +
+        `<div class="hp-bar-wrap"><div class="hp-bar" style="width:${hpPct};background:${barColor}"></div></div>` +
+        `<span class="hp-val" style="color:${nameColor}">${alive ? hp : '✕'}</span>`;
+    });
+  };
+
+  renderSide(ctEl, ct);
+  renderSide(tEl, t);
 }
 
 function esc(s) {
@@ -961,9 +994,8 @@ function changeRound(delta) {
   roundIdx  = next;
   framePos  = 0;
   playing   = false;
-  document.getElementById('feed-active').innerHTML = '';
-  document.getElementById('feed-passive').innerHTML = '';
-  lastActiveSig = ''; lastPassiveSig = '';
+  document.getElementById('killfeed').innerHTML = '';
+  lastFeedSig = '';
   updatePlayBtn();
   updateRoundLabel();
   buildEventMarks(DEMO.rounds[roundIdx]);

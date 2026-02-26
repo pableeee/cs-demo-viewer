@@ -53,7 +53,6 @@ type Round struct {
 	Grenades  []Grenade    `json:"grenades"`
 	Shots     []Shot         `json:"shots"`
 	Dmg       [][2]int       `json:"dmg,omitempty"`    // per-player damage: [playerIdx, healthDamage]
-	Hits      []HitEvent     `json:"hits,omitempty"`   // per-hit damage events for the feed
 	Trails    []GrenadeTrail `json:"trails,omitempty"` // grenade throw arcs
 }
 
@@ -81,19 +80,20 @@ func (ps PlayerState) MarshalJSON() ([]byte, error) {
 }
 
 // Kill is serialized as a compact JSON array:
-// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY, dmg]
-// dmg: total HP damage attacker dealt to victim during this round
+// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1)]
+// assisterIdx: -1 if no assist; flashAssist: 1 if the assist was via flashbang
 type Kill struct {
-	Tick   int
-	AtkIdx int
-	VicIdx int
-	Weapon string
-	HS     bool
-	AtkX   int
-	AtkY   int
-	VicX   int
-	VicY   int
-	DMG    int
+	Tick        int
+	AtkIdx      int
+	VicIdx      int
+	Weapon      string
+	HS          bool
+	AtkX        int
+	AtkY        int
+	VicX        int
+	VicY        int
+	AssisterIdx int
+	FlashAssist bool
 }
 
 func (k Kill) MarshalJSON() ([]byte, error) {
@@ -101,7 +101,11 @@ func (k Kill) MarshalJSON() ([]byte, error) {
 	if k.HS {
 		hs = 1
 	}
-	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, hs, k.AtkX, k.AtkY, k.VicX, k.VicY, k.DMG})
+	fa := 0
+	if k.FlashAssist {
+		fa = 1
+	}
+	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, hs, k.AtkX, k.AtkY, k.VicX, k.VicY, k.AssisterIdx, fa})
 }
 
 // BombAction is serialized as a compact JSON array: [tick, action, x, y, site]
@@ -144,18 +148,6 @@ func (s Shot) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]int{s.Tick, s.PIdx})
 }
 
-// HitEvent records a single damage-dealt event, serialized as: [tick, atkIdx, vicIdx, dmg, weapon]
-type HitEvent struct {
-	Tick   int
-	AtkIdx int
-	VicIdx int
-	DMG    int
-	Weapon string
-}
-
-func (h HitEvent) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{h.Tick, h.AtkIdx, h.VicIdx, h.DMG, h.Weapon})
-}
 
 // GrenadeTrail is the throw arc of a grenade, serialized as: [startTick, endTick, type, throwerIdx, [[tickOffset,x,y],...]]
 // tickOffset is the elapsed ticks from startTick at each sampled point.
@@ -337,21 +329,22 @@ func Parse(r io.Reader) (*DemoData, error) {
 		}
 		ai := getIdx(e.Killer)
 		vi := getIdx(e.Victim)
-		var killDmg int
-		if roundVicDmg[ai] != nil {
-			killDmg = roundVicDmg[ai][vi]
+		asi := -1
+		if e.Assister != nil {
+			asi = getIdx(e.Assister)
 		}
 		cur.Kills = append(cur.Kills, Kill{
-			Tick:   tick,
-			AtkIdx: ai,
-			VicIdx: vi,
-			Weapon: wep,
-			HS:     e.IsHeadshot,
-			AtkX:   iround(ap.X),
-			AtkY:   iround(ap.Y),
-			VicX:   iround(vp.X),
-			VicY:   iround(vp.Y),
-			DMG:    killDmg,
+			Tick:        tick,
+			AtkIdx:      ai,
+			VicIdx:      vi,
+			Weapon:      wep,
+			HS:          e.IsHeadshot,
+			AtkX:        iround(ap.X),
+			AtkY:        iround(ap.Y),
+			VicX:        iround(vp.X),
+			VicY:        iround(vp.Y),
+			AssisterIdx: asi,
+			FlashAssist: e.AssistedFlash,
 		})
 		// Accumulate match stats.
 		if ai >= 0 && ai < len(data.Stats) {
@@ -383,15 +376,6 @@ func Parse(r io.Reader) (*DemoData, error) {
 				roundVicDmg[ai] = map[int]int{}
 			}
 			roundVicDmg[ai][vi] += e.HealthDamage
-			// Record damage event for the live feed.
-			tick := p.GameState().IngameTick()
-			var wep string
-			if e.Weapon != nil {
-				wep = e.Weapon.Type.String()
-			}
-			cur.Hits = append(cur.Hits, HitEvent{
-				Tick: tick, AtkIdx: ai, VicIdx: vi, DMG: e.HealthDamage, Weapon: wep,
-			})
 		}
 	})
 
