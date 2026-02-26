@@ -13,14 +13,14 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #main{flex:1;display:flex;overflow:hidden}
 #canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
-#killfeed{position:absolute;top:10px;right:10px;pointer-events:none;display:flex;flex-direction:row;gap:8px;align-items:flex-start;max-height:calc(100% - 20px)}
-#feed-active,#feed-passive{display:flex;flex-direction:column;gap:4px;overflow-y:hidden}
-#feed-active{width:220px}#feed-passive{width:170px}
-.kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px}
-.kf-row1{display:flex;align-items:center;gap:6px}
+#killfeed{position:absolute;top:10px;right:10px;pointer-events:none;display:flex;flex-direction:row;gap:8px;align-items:flex-start;max-height:calc(100% - 20px);overflow:clip}
+#feed-active{width:220px;display:flex;flex-direction:column;gap:4px;overflow:clip}
+#feed-passive{width:170px;display:flex;flex-direction:column;gap:4px;overflow:clip}
+.kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;overflow:clip;max-width:100%}
+.kf-row1{display:flex;align-items:center;gap:6px;overflow:clip;max-width:100%}
 .kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
 .kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
-.kf-name-atk{font-weight:700}.kf-name-vic{font-weight:700;color:#adbac7}
+.kf-name-atk{font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;color:#adbac7;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:11px}
 .kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
@@ -694,15 +694,12 @@ function buildFeedEl(entry, round) {
   } else if (entry.type === 'hit') {
     const h = entry.data;
     const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
-    const vicName = (DEMO.players[h[HI_VIC]] || {}).name || '?';
     el.className = 'kf-entry kf-hit';
     el.innerHTML =
       `<div class="kf-row1">` +
       `<span class="kf-name-atk">${esc(atkName)}</span>` +
       `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
-      `<span class="kf-name-vic">${esc(vicName)}</span>` +
       `<span class="kf-dmg">${h[HI_DMG]}</span>` +
-      `<span class="kf-time">${roundTimeFmt(round, h[HI_TICK])}</span>` +
       `</div>`;
   } else { // kill
     const k = entry.data;
