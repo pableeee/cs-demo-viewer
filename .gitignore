@@ -1,2 +1,16 @@
 /demoview
+
+# Local Claude Code settings (may contain personal paths/credentials)
+.claude/
+
+# Viewer HTML output files
 *.dem.html
+/*.html
+
+# Environment / secrets
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
