@@ -361,8 +361,17 @@ function render() {
   // ── In-flight grenade projectiles ───────────────────────────────────────────
   for (const tr of (round.trails || [])) {
     const pts2 = tr[TR_PTS];
-    if (!pts2 || pts2.length === 0) continue;
-    const landTick2 = tr[TR_ST] + pts2[pts2.length - 1][TR_PT_T];
+    if (!pts2 || pts2.length < 2) continue;
+    // Find when the grenade stopped moving (last point with significant displacement).
+    // Trajectory data can include stationary points long after landing (e.g. smoke entity
+    // persisting for 18 s), so we can't just use the last point.
+    let landIdx = 0;
+    for (let i = 1; i < pts2.length; i++) {
+      const dx = pts2[i][TR_PT_X] - pts2[i-1][TR_PT_X];
+      const dy = pts2[i][TR_PT_Y] - pts2[i-1][TR_PT_Y];
+      if (dx*dx + dy*dy >= 9) landIdx = i;
+    }
+    const landTick2 = tr[TR_ST] + pts2[landIdx][TR_PT_T];
     if (tick < tr[TR_ST] || tick >= landTick2) continue;
     const pos = interpTrailPos(tr, tick);
     if (!pos) continue;
