@@ -20,19 +20,29 @@ canvas{display:block;cursor:crosshair}
 .kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
 .kf-name-atk{font-weight:700;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
 .kf-asst{font-size:10px;color:#8b949e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
-.kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
-.kf-flash{color:#e8e870;font-size:9px;background:#2a2a0a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:11px}
+.kf-wico{display:inline-flex;align-items:center;margin:0 1px;flex-shrink:0;color:#8b949e}
+.kf-ico{display:inline-flex;align-items:center;flex-shrink:0}
+.kf-wico svg,.kf-ico svg{display:block;height:11px;width:auto}
+.ico-hs{color:#f85149}.ico-ns{color:#d29922}.ico-sm{color:#8b949e}.ico-bl{color:#f0c000}.ico-fa{color:#e8e870}
 .kf-time{color:#6e7681;font-size:10px;margin-left:auto}
 /* Health panel */
 #health-panel{width:200px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
 .hp-side{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .hp-side-hdr{padding:4px 8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #30363d;flex-shrink:0}
-.hp-row{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid #21262d}
+.hp-row{display:flex;flex-direction:column;gap:2px;padding:3px 8px;border-bottom:1px solid #21262d}
+.hp-main{display:flex;align-items:center;gap:6px}
+.hp-sub{display:flex;align-items:center;gap:4px}
 .hp-name{font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0;width:70px}
 .hp-bar-wrap{flex:1;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
 .hp-bar{height:100%;border-radius:3px;transition:width 0.1s}
 .hp-val{font-size:10px;font-weight:600;min-width:26px;text-align:right;flex-shrink:0}
+.hp-wep{font-size:10px;color:#8b949e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.hp-armor{font-size:9px;font-weight:700;border-radius:3px;padding:1px 4px;flex-shrink:0}
+.hp-armor-kh{color:#7ee787;background:#0d2414}.hp-armor-k{color:#d29922;background:#2a2000}
+.hp-util{display:flex;gap:2px;flex-shrink:0}
+.ud{width:7px;height:7px;border-radius:1px;flex-shrink:0}
+.ud-smoke{background:#8b949e}.ud-he{background:#7ee787}.ud-flash{background:#f0e030}.ud-molotov{background:#ff9800}.ud-decoy{background:#6e7681}
 #level-btn{position:absolute;top:10px;left:10px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 #level-btn:hover{background:#30363d}
 #level-btn.lower{background:#2ea043;border-color:#2ea043}
@@ -150,11 +160,15 @@ canvas{display:block;cursor:crosshair}
 const DEMO = /*INJECT_DATA*/;
 
 // ── Data format helpers ───────────────────────────────────────────────────────
-// PlayerState array: [idx, flags, hp, x, y, z, yaw]
-const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6;
-function psTeam(ps)  { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
-function psAlive(ps) { return !(ps[PS_FLAGS] & 1); }
-function psBomb(ps)  { return !!(ps[PS_FLAGS] & 4); }
+// PlayerState array: [idx, flags, hp, x, y, z, yaw, weapon, utility]
+// flags bits: 0=dead, 1=T(vs CT), 2=bomb carrier, 3=has kevlar, 4=has helmet
+// utility bits: 0=smoke, 1=HE, 2-3=flash count (0-2), 4=molotov/incendiary, 5=decoy
+const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6, PS_WEP=7, PS_UTIL=8;
+function psTeam(ps)   { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
+function psAlive(ps)  { return !(ps[PS_FLAGS] & 1); }
+function psBomb(ps)   { return !!(ps[PS_FLAGS] & 4); }
+function psKevlar(ps) { return !!(ps[PS_FLAGS] & 8); }
+function psHelmet(ps) { return !!(ps[PS_FLAGS] & 16); }
 
 // Round time: seconds elapsed from freeze-end tick
 function roundTimeFmt(round, tick) {
@@ -163,8 +177,8 @@ function roundTimeFmt(round, tick) {
   return Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
 }
 
-// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1)]
-const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_ASST=9,K_FASST=10;
+// Kill array: [tick, atkIdx, vicIdx, weapon, hs(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1), noScope(0/1), throughSmoke(0/1), attackerBlind(0/1)]
+const K_TICK=0,K_ATK=1,K_VIC=2,K_WEP=3,K_HS=4,K_AX=5,K_AY=6,K_VX=7,K_VY=8,K_ASST=9,K_FASST=10,K_NS=11,K_TSMOKE=12,K_BLIND=13;
 
 // BombAction array: [tick, action, x, y, site]
 const BA_TICK=0, BA_ACT=1, BA_X=2, BA_Y=3, BA_SITE=4;
@@ -324,7 +338,7 @@ function interpPlayers(round, fp) {
       Math.round(lerp(ps0[PS_X], ps1[PS_X], t)),
       Math.round(lerp(ps0[PS_Y], ps1[PS_Y], t)),
       Math.round(lerp(ps0[PS_Z], ps1[PS_Z], t)),
-      ps1[PS_YAW],
+      ps1[PS_YAW], ps1[PS_WEP], ps1[PS_UTIL],
     ];
   });
 }
@@ -706,6 +720,65 @@ let lastFeedSig = '';
 
 const BOMB_ACT_LABEL = ['Planting…','B Planted','Defusing…','B Defused','B Exploded','B Dropped','B Picked up'];
 
+// ── Icons ─────────────────────────────────────────────────────────────────────
+const ICO_HS =
+  '<svg viewBox="0 0 11 12"><ellipse cx="5.5" cy="4.5" rx="4.5" ry="4" fill="currentColor"/>' +
+  '<circle cx="3.2" cy="4.5" r="1.3" fill="#0d1117"/><circle cx="7.8" cy="4.5" r="1.3" fill="#0d1117"/>' +
+  '<rect x="2" y="8" width="7" height="1.2" rx=".4" fill="currentColor" opacity=".5"/>' +
+  '<rect x="2" y="9" width="2" height="2.5" rx=".4" fill="currentColor"/>' +
+  '<rect x="4.5" y="9" width="2" height="2.5" rx=".4" fill="currentColor"/>' +
+  '<rect x="7" y="9" width="2" height="2.5" rx=".4" fill="currentColor"/></svg>';
+const ICO_NS =
+  '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">' +
+  '<circle cx="6" cy="6" r="4.5"/>' +
+  '<line x1="6" y1="1" x2="6" y2="3.5"/><line x1="6" y1="8.5" x2="6" y2="11"/>' +
+  '<line x1="1" y1="6" x2="3.5" y2="6"/><line x1="8.5" y1="6" x2="11" y2="6"/>' +
+  '<line x1="2.5" y1="9.5" x2="9.5" y2="2.5" stroke-width="1.6"/></svg>';
+const ICO_TSMOKE =
+  '<svg viewBox="0 0 14 10" fill="currentColor">' +
+  '<circle cx="3.5" cy="6.5" r="3.5"/><circle cx="7" cy="5" r="4"/><circle cx="11" cy="6.5" r="3"/></svg>';
+const ICO_BLIND =
+  '<svg viewBox="0 0 10 14" fill="currentColor"><polygon points="5.5,0 1,8 5,8 4.5,14 9,6 5,6"/></svg>';
+const ICO_FLASH =
+  '<svg viewBox="0 0 12 12" fill="currentColor">' +
+  '<circle cx="6" cy="6" r="5.5" opacity=".7"/><circle cx="6" cy="6" r="2.5" opacity=".5"/>' +
+  '<circle cx="6" cy="6" r="1"/></svg>';
+
+const WEP_SVGS = {
+  rifle:   '<svg viewBox="0 0 20 10" fill="currentColor"><rect x="0" y="4" width="13" height="2.5" rx=".5"/><rect x="13" y="3.5" width="7" height="2" rx=".5"/><rect x="8" y="1.5" width="4" height="2.5" rx=".5"/><rect x="4" y="6.5" width="4" height="3" rx=".5" opacity=".8"/></svg>',
+  sniper:  '<svg viewBox="0 0 22 10" fill="currentColor"><rect x="0" y="4" width="17" height="2" rx=".5"/><rect x="17" y="3.5" width="5" height="2" rx=".5"/><rect x="9" y="2" width="6" height="2" rx=".5"/><rect x="5" y="6" width="3" height="3" rx=".5" opacity=".8"/></svg>',
+  pistol:  '<svg viewBox="0 0 14 11" fill="currentColor"><rect x="0" y="3" width="8" height="3" rx=".5"/><rect x="8" y="3" width="5" height="2" rx=".5"/><rect x="2" y="6" width="3.5" height="4" rx=".5" opacity=".8"/></svg>',
+  smg:     '<svg viewBox="0 0 16 10" fill="currentColor"><rect x="0" y="3.5" width="10" height="3" rx=".5"/><rect x="10" y="3" width="6" height="2.5" rx=".5"/><rect x="3" y="1" width="4" height="2.5" rx=".5"/><rect x="4" y="6.5" width="3" height="3" rx=".5" opacity=".8"/></svg>',
+  shotgun: '<svg viewBox="0 0 18 10" fill="currentColor"><rect x="0" y="3.5" width="12" height="3" rx=".5"/><rect x="12" y="3" width="6" height="2" rx=".5"/><rect x="5" y="6.5" width="4" height="3" rx=".5" opacity=".8"/></svg>',
+  heavy:   '<svg viewBox="0 0 18 11" fill="currentColor"><rect x="0" y="3" width="12" height="4" rx=".5"/><rect x="12" y="3" width="6" height="3" rx=".5"/><rect x="3" y="7" width="6" height="3" rx=".5" opacity=".7"/><rect x="3" y="1" width="6" height="2" rx=".5" opacity=".7"/></svg>',
+  knife:   '<svg viewBox="0 0 14 10" fill="currentColor"><path d="M0,9 L10,1 L14,4 L12,7 L4,10 Z" opacity=".9"/><rect x="0" y="7" width="3.5" height="2" rx=".5"/></svg>',
+  he:      '<svg viewBox="0 0 11 13" fill="currentColor"><circle cx="5.5" cy="7.5" r="5"/><rect x="4.5" y="1" width="2.5" height="4" rx=".5" opacity=".7"/></svg>',
+  molotov: '<svg viewBox="0 0 10 14" fill="currentColor"><rect x="2" y="6" width="6" height="7.5" rx="1.5"/><rect x="3.5" y="3.5" width="3" height="3" rx=".5"/><path d="M3,4 Q5,0 7,4" fill="currentColor" opacity=".7"/></svg>',
+  flash:   '<svg viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="5.5" opacity=".7"/><circle cx="6" cy="6" r="2.5" opacity=".5"/><circle cx="6" cy="6" r="1"/></svg>',
+  smoke:   '<svg viewBox="0 0 14 11" fill="currentColor"><circle cx="3.5" cy="7" r="3.5"/><circle cx="7.5" cy="5.5" r="4"/><circle cx="11.5" cy="7" r="3"/></svg>',
+  decoy:   '<svg viewBox="0 0 11 12" fill="currentColor"><rect x="1" y="3" width="9" height="7" rx="1.5"/><rect x="4" y="0" width="3" height="4" rx=".5" opacity=".7"/></svg>',
+};
+const WEP_CAT = {
+  'AK-47':'rifle','M4A4':'rifle','M4A1-S':'rifle','AUG':'rifle','SG 553':'rifle','FAMAS':'rifle','Galil AR':'rifle',
+  'AWP':'sniper','SSG 08':'sniper','SCAR-20':'sniper','G3SG1':'sniper',
+  'MP9':'smg','MP5-SD':'smg','MAC-10':'smg','UMP-45':'smg','P90':'smg','PP-Bizon':'smg','MP7':'smg',
+  'Desert Eagle':'pistol','Glock-18':'pistol','USP-S':'pistol','P2000':'pistol','Five-SeveN':'pistol','Tec-9':'pistol','CZ75 Auto':'pistol','Dual Berettas':'pistol','R8 Revolver':'pistol',
+  'Nova':'shotgun','XM1014':'shotgun','MAG-7':'shotgun','Sawed-Off':'shotgun',
+  'M249':'heavy','Negev':'heavy',
+  'HE Grenade':'he','Flashbang':'flash','Smoke Grenade':'smoke',
+  'Molotov Cocktail':'molotov','Incendiary Grenade':'molotov','Decoy Grenade':'decoy',
+};
+const NADE_TR_CAT = ['smoke','flash','he','molotov','smoke','smoke']; // indexed by TR_TYPE
+
+function wepIcon(w, color) {
+  let cat = WEP_CAT[w];
+  if (!cat && w && w.startsWith('Knife')) cat = 'knife';
+  const svg = cat ? WEP_SVGS[cat] : null;
+  const style = color ? ` style="color:${color}"` : '';
+  return svg ? `<span class="kf-wico"${style}>${svg}</span>` : `<span class="kf-weapon">${esc(w)}</span>`;
+}
+function ico(svg, cls) { return `<span class="kf-ico ${cls}">${svg}</span>`; }
+
 function buildFeedEl(entry, round) {
   const el = document.createElement('div');
   el.dataset.kt = entry.t;
@@ -730,7 +803,7 @@ function buildFeedEl(entry, round) {
     el.innerHTML =
       `<div class="kf-row1">` +
       (throwerName ? `<span class="kf-name-atk" style="color:${throwerColor}">${esc(throwerName)}</span>` : '') +
-      `<span class="kf-weapon" style="color:${nadeColor}">${esc(label)}</span>` +
+      `<span class="kf-wico" style="color:${nadeColor}">${WEP_SVGS[NADE_TR_CAT[tr[TR_TYPE]]] || ''}</span>` +
       `<span class="kf-time">${roundTimeFmt(round, tr[TR_ST])}</span>` +
       `</div>`;
   } else { // kill
@@ -751,15 +824,18 @@ function buildFeedEl(entry, round) {
         `<div class="kf-row2">` +
         `<span style="color:#6e7681">+</span>` +
         `<span class="kf-asst" style="color:${asstColor}">${esc(asstName)}</span>` +
-        (k[K_FASST] ? '<span class="kf-flash">flash</span>' : '<span style="color:#6e7681;font-size:10px">assist</span>') +
+        (k[K_FASST] ? ico(ICO_FLASH, 'ico-fa') : '') +
         `</div>`;
     }
     el.innerHTML =
       `<div class="kf-row1">` +
       `<span class="kf-name-atk" style="color:${atkColor}">${esc(atkName)}</span>` +
-      `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
+      wepIcon(k[K_WEP]) +
       `<span class="kf-name-vic" style="color:${vicColor}">${esc(vicName)}</span>` +
-      (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
+      (k[K_HS]     ? ico(ICO_HS,     'ico-hs') : '') +
+      (k[K_NS]     ? ico(ICO_NS,     'ico-ns') : '') +
+      (k[K_TSMOKE] ? ico(ICO_TSMOKE, 'ico-sm') : '') +
+      (k[K_BLIND]  ? ico(ICO_BLIND,  'ico-bl') : '') +
       `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
       `</div>` + asstHtml;
   }
@@ -832,10 +908,32 @@ function updateHealthPanel(players, round) {
         row.className = 'hp-row';
         container.appendChild(row);
       }
+      const armorHtml = alive
+        ? (psHelmet(ps) ? '<span class="hp-armor hp-armor-kh">K+H</span>'
+          : psKevlar(ps) ? '<span class="hp-armor hp-armor-k">K</span>'
+          : '')
+        : '';
+      let utilHtml = '';
+      if (alive) {
+        const u = ps[PS_UTIL] || 0;
+        let dots = '';
+        if (u & 1)       dots += '<span class="ud ud-smoke" title="Smoke"></span>';
+        if ((u>>1) & 1)  dots += '<span class="ud ud-he" title="HE"></span>';
+        const fl = (u >> 2) & 3;
+        for (let f = 0; f < fl; f++) dots += '<span class="ud ud-flash" title="Flash"></span>';
+        if ((u>>4) & 1)  dots += '<span class="ud ud-molotov" title="Molotov"></span>';
+        if ((u>>5) & 1)  dots += '<span class="ud ud-decoy" title="Decoy"></span>';
+        if (dots) utilHtml = `<span class="hp-util">${dots}</span>`;
+      }
+      const wepHtml = alive
+        ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}</div>`
+        : '';
       row.innerHTML =
+        `<div class="hp-main">` +
         `<span class="hp-name" style="color:${nameColor}" title="${esc(name)}">${esc(name)}</span>` +
         `<div class="hp-bar-wrap"><div class="hp-bar" style="width:${hpPct};background:${barColor}"></div></div>` +
-        `<span class="hp-val" style="color:${nameColor}">${alive ? hp : '✕'}</span>`;
+        `<span class="hp-val" style="color:${nameColor}">${alive ? hp : '✕'}</span>` +
+        `</div>` + wepHtml;
     });
   };
 

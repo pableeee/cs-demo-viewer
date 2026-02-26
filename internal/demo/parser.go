@@ -63,49 +63,53 @@ type Frame struct {
 }
 
 // PlayerState is one player's state at a sampled tick, serialized as a compact JSON array:
-// [idx, flags, hp, x, y, z, yaw]
-// flags: 0=CT+alive, 1=CT+dead, 2=T+alive, 3=T+dead
+// [idx, flags, hp, x, y, z, yaw, weapon, utility]
+// flags bits: 0=dead, 1=T(vs CT), 2=bomb carrier, 3=has kevlar, 4=has helmet
+// utility bits: 0=smoke, 1=HE, 2-3=flash count (0-2), 4=molotov/incendiary, 5=decoy
 type PlayerState struct {
-	Idx   int
-	Flags int
-	HP    int
-	X     int
-	Y     int
-	Z     int
-	Yaw   int
+	Idx     int
+	Flags   int
+	HP      int
+	X       int
+	Y       int
+	Z       int
+	Yaw     int
+	Weapon  string
+	Utility int
 }
 
 func (ps PlayerState) MarshalJSON() ([]byte, error) {
-	return json.Marshal([7]int{ps.Idx, ps.Flags, ps.HP, ps.X, ps.Y, ps.Z, ps.Yaw})
+	return json.Marshal([]any{ps.Idx, ps.Flags, ps.HP, ps.X, ps.Y, ps.Z, ps.Yaw, ps.Weapon, ps.Utility})
 }
 
 // Kill is serialized as a compact JSON array:
-// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1)]
+// [tick, atkIdx, vicIdx, weapon, headshot(0/1), atkX, atkY, vicX, vicY, assisterIdx, flashAssist(0/1), noScope(0/1), throughSmoke(0/1), attackerBlind(0/1)]
 // assisterIdx: -1 if no assist; flashAssist: 1 if the assist was via flashbang
 type Kill struct {
-	Tick        int
-	AtkIdx      int
-	VicIdx      int
-	Weapon      string
-	HS          bool
-	AtkX        int
-	AtkY        int
-	VicX        int
-	VicY        int
-	AssisterIdx int
-	FlashAssist bool
+	Tick          int
+	AtkIdx        int
+	VicIdx        int
+	Weapon        string
+	HS            bool
+	AtkX          int
+	AtkY          int
+	VicX          int
+	VicY          int
+	AssisterIdx   int
+	FlashAssist   bool
+	NoScope       bool
+	ThroughSmoke  bool
+	AttackerBlind bool
 }
 
 func (k Kill) MarshalJSON() ([]byte, error) {
-	hs := 0
-	if k.HS {
-		hs = 1
+	b := func(v bool) int {
+		if v {
+			return 1
+		}
+		return 0
 	}
-	fa := 0
-	if k.FlashAssist {
-		fa = 1
-	}
-	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, hs, k.AtkX, k.AtkY, k.VicX, k.VicY, k.AssisterIdx, fa})
+	return json.Marshal([]any{k.Tick, k.AtkIdx, k.VicIdx, k.Weapon, b(k.HS), k.AtkX, k.AtkY, k.VicX, k.VicY, k.AssisterIdx, b(k.FlashAssist), b(k.NoScope), b(k.ThroughSmoke), b(k.AttackerBlind)})
 }
 
 // BombAction is serialized as a compact JSON array: [tick, action, x, y, site]
@@ -244,14 +248,46 @@ func Parse(r io.Reader) (*DemoData, error) {
 			if pl.SteamID64 == carrierID {
 				flags |= 4 // bomb carrier
 			}
+			if pl.Armor() > 0 {
+				flags |= 8 // has kevlar
+				if pl.HasHelmet() {
+					flags |= 16 // has helmet
+				}
+			}
+			var wep string
+			if aw := pl.ActiveWeapon(); aw != nil && aw.Type != common.EqUnknown {
+				wep = aw.Type.String()
+			}
+			var util int
+			for _, w := range pl.Weapons() {
+				if w == nil {
+					continue
+				}
+				switch w.Type {
+				case common.EqSmoke:
+					util |= 1
+				case common.EqHE:
+					util |= 2
+				case common.EqFlash:
+					if fl := (util >> 2) & 3; fl < 2 {
+						util = (util &^ (3 << 2)) | ((fl + 1) << 2)
+					}
+				case common.EqMolotov, common.EqIncendiary:
+					util |= 16
+				case common.EqDecoy:
+					util |= 32
+				}
+			}
 			frame.Players = append(frame.Players, PlayerState{
-				Idx:   getIdx(pl),
-				Flags: flags,
-				HP:    pl.Health(),
-				X:     iround(pos.X),
-				Y:     iround(pos.Y),
-				Z:     iround(pos.Z),
-				Yaw:   iround(float64(pl.ViewDirectionX())),
+				Idx:     getIdx(pl),
+				Flags:   flags,
+				HP:      pl.Health(),
+				X:       iround(pos.X),
+				Y:       iround(pos.Y),
+				Z:       iround(pos.Z),
+				Yaw:     iround(float64(pl.ViewDirectionX())),
+				Weapon:  wep,
+				Utility: util,
 			})
 		}
 		return frame
@@ -334,17 +370,20 @@ func Parse(r io.Reader) (*DemoData, error) {
 			asi = getIdx(e.Assister)
 		}
 		cur.Kills = append(cur.Kills, Kill{
-			Tick:        tick,
-			AtkIdx:      ai,
-			VicIdx:      vi,
-			Weapon:      wep,
-			HS:          e.IsHeadshot,
-			AtkX:        iround(ap.X),
-			AtkY:        iround(ap.Y),
-			VicX:        iround(vp.X),
-			VicY:        iround(vp.Y),
-			AssisterIdx: asi,
-			FlashAssist: e.AssistedFlash,
+			Tick:          tick,
+			AtkIdx:        ai,
+			VicIdx:        vi,
+			Weapon:        wep,
+			HS:            e.IsHeadshot,
+			AtkX:          iround(ap.X),
+			AtkY:          iround(ap.Y),
+			VicX:          iround(vp.X),
+			VicY:          iround(vp.Y),
+			AssisterIdx:   asi,
+			FlashAssist:   e.AssistedFlash,
+			NoScope:       e.NoScope,
+			ThroughSmoke:  e.ThroughSmoke,
+			AttackerBlind: e.AttackerBlind,
 		})
 		// Accumulate match stats.
 		if ai >= 0 && ai < len(data.Stats) {
