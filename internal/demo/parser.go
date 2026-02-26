@@ -63,7 +63,7 @@ type Frame struct {
 }
 
 // PlayerState is one player's state at a sampled tick, serialized as a compact JSON array:
-// [idx, flags, hp, x, y, z, yaw, weapon, utility]
+// [idx, flags, hp, x, y, z, yaw, weapon, utility, money]
 // flags bits: 0=dead, 1=T(vs CT), 2=bomb carrier, 3=has kevlar, 4=has helmet
 // utility bits: 0=smoke, 1=HE, 2-3=flash count (0-2), 4=molotov/incendiary, 5=decoy
 type PlayerState struct {
@@ -76,10 +76,11 @@ type PlayerState struct {
 	Yaw     int
 	Weapon  string
 	Utility int
+	Money   int
 }
 
 func (ps PlayerState) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{ps.Idx, ps.Flags, ps.HP, ps.X, ps.Y, ps.Z, ps.Yaw, ps.Weapon, ps.Utility})
+	return json.Marshal([]any{ps.Idx, ps.Flags, ps.HP, ps.X, ps.Y, ps.Z, ps.Yaw, ps.Weapon, ps.Utility, ps.Money})
 }
 
 // Kill is serialized as a compact JSON array:
@@ -288,6 +289,7 @@ func Parse(r io.Reader) (*DemoData, error) {
 				Yaw:     iround(float64(pl.ViewDirectionX())),
 				Weapon:  wep,
 				Utility: util,
+				Money:   pl.Money(),
 			})
 		}
 		return frame

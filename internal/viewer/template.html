@@ -62,7 +62,7 @@ canvas{display:block;cursor:crosshair}
 #event-marks{position:relative;height:4px;overflow:hidden;border-radius:2px}
 .ev-mark{position:absolute;top:0;width:2px;height:100%;border-radius:1px;pointer-events:none;transform:translateX(-50%)}
 .hp-rnd-stats{font-size:10px;flex-shrink:0;display:flex;gap:5px;font-variant-numeric:tabular-nums}
-.hp-rnd-k{color:#7ee787;font-weight:600}.hp-rnd-d{color:#f85149}.hp-rnd-dmg{color:#6e7681}
+.hp-rnd-k{color:#7ee787;font-weight:600}.hp-rnd-d{color:#f85149}.hp-rnd-a{color:#8b949e}.hp-rnd-dmg{color:#d4a94e}
 </style>
 </head>
 <body>
@@ -127,10 +127,10 @@ canvas{display:block;cursor:crosshair}
 const DEMO = /*INJECT_DATA*/;
 
 // ── Data format helpers ───────────────────────────────────────────────────────
-// PlayerState array: [idx, flags, hp, x, y, z, yaw, weapon, utility]
+// PlayerState array: [idx, flags, hp, x, y, z, yaw, weapon, utility, money]
 // flags bits: 0=dead, 1=T(vs CT), 2=bomb carrier, 3=has kevlar, 4=has helmet
 // utility bits: 0=smoke, 1=HE, 2-3=flash count (0-2), 4=molotov/incendiary, 5=decoy
-const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6, PS_WEP=7, PS_UTIL=8;
+const PS_IDX=0, PS_FLAGS=1, PS_HP=2, PS_X=3, PS_Y=4, PS_Z=5, PS_YAW=6, PS_WEP=7, PS_UTIL=8, PS_MONEY=9;
 function psTeam(ps)   { return (ps[PS_FLAGS] & 2) ? 'T' : 'CT'; }
 function psAlive(ps)  { return !(ps[PS_FLAGS] & 1); }
 function psBomb(ps)   { return !!(ps[PS_FLAGS] & 4); }
@@ -304,7 +304,7 @@ function interpPlayers(round, fp) {
       Math.round(lerp(ps0[PS_X], ps1[PS_X], t)),
       Math.round(lerp(ps0[PS_Y], ps1[PS_Y], t)),
       Math.round(lerp(ps0[PS_Z], ps1[PS_Z], t)),
-      ps1[PS_YAW], ps1[PS_WEP], ps1[PS_UTIL],
+      ps1[PS_YAW], ps1[PS_WEP], ps1[PS_UTIL], ps1[PS_MONEY],
     ];
   });
 }
@@ -675,7 +675,7 @@ function render() {
   }
 
   updateKillFeed(round, tick);
-  updateHealthPanel(players, round);
+  updateHealthPanel(players, round, framePos);
   document.getElementById('tick-lbl').textContent = rtEl.textContent;
   const prog = round.frames.length > 1 ? framePos / (round.frames.length - 1) : 0;
   document.getElementById('timeline').value = Math.round(prog * 1000);
@@ -846,24 +846,29 @@ function getPlayerTeam(round, tick, pidx) {
 }
 
 // ── Health panel ──────────────────────────────────────────────────────────────
-function updateHealthPanel(players, round) {
+function updateHealthPanel(players, round, fp) {
   const ctEl = document.getElementById('hp-ct');
   const tEl  = document.getElementById('hp-t');
   if (!ctEl || !tEl) return;
 
-  // Aggregate per-player round stats
+  // Accumulate K/D/A across all rounds up to now.
+  // Previous rounds: count all kills. Current round: count up to f1.tick so
+  // the counter stays in sync with interpPlayers (which shows f1's state).
   const pm = {};
-  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, dmg:0}; };
-  if (round) {
-    for (const k of (round.kills || [])) {
-      ensure(k[K_ATK]); ensure(k[K_VIC]);
-      pm[k[K_ATK]].k++;
-      pm[k[K_VIC]].d++;
-    }
-    for (const [idx, dmg] of (round.dmg || [])) {
-      ensure(idx);
-      pm[idx].dmg += dmg;
-    }
+  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, a:0}; };
+  const addKill = k => {
+    ensure(k[K_ATK]); ensure(k[K_VIC]);
+    pm[k[K_ATK]].k++;
+    pm[k[K_VIC]].d++;
+    if (k[K_ASST] >= 0) { ensure(k[K_ASST]); pm[k[K_ASST]].a++; }
+  };
+  for (let ri = 0; ri < roundIdx; ri++) {
+    for (const k of (DEMO.rounds[ri].kills || [])) addKill(k);
+  }
+  const fi1 = Math.min(Math.floor(fp) + 1, round.frames.length - 1);
+  const cutoffTick = round.frames[fi1].tick;
+  for (const k of (round.kills || [])) {
+    if (k[K_TICK] <= cutoffTick) addKill(k);
   }
 
   const ct = [], t = [];
@@ -907,8 +912,9 @@ function updateHealthPanel(players, round) {
         if ((u>>5) & 1)  dots += ui(WEP_SVGS.decoy,   '#6e7681', 'Decoy');
         if (dots) utilHtml = `<span class="hp-util">${dots}</span>`;
       }
-      const st = pm[ps[PS_IDX]] || {k:0, d:0, dmg:0};
-      const statsRow = `<div class="hp-sub"><span class="hp-rnd-stats"><span class="hp-rnd-k">${st.k}k</span><span class="hp-rnd-d">${st.d}d</span><span class="hp-rnd-dmg">${st.dmg}</span></span></div>`;
+      const st = pm[ps[PS_IDX]] || {k:0, d:0, a:0};
+      const money = ps[PS_MONEY] || 0;
+      const statsRow = `<div class="hp-sub"><span class="hp-rnd-stats"><span class="hp-rnd-k">${st.k}k</span><span class="hp-rnd-d">${st.d}d</span><span class="hp-rnd-a">${st.a}a</span><span class="hp-rnd-dmg">$${money}</span></span></div>`;
       const wepRow = alive
         ? `<div class="hp-sub">${ps[PS_WEP] ? `<span class="hp-wep">${esc(ps[PS_WEP])}</span>` : ''}${utilHtml}${armorHtml}</div>`
         : '';
