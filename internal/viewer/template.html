@@ -11,16 +11,16 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-seri
 #hdr h1{font-size:15px;font-weight:600;color:#58a6ff}
 #hdr-info{font-size:12px;color:#8b949e}
 #main{flex:1;display:flex;overflow:hidden}
-#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#0d1117;position:relative;overflow:hidden}
+#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:flex-start;background:#0d1117;position:relative;overflow:hidden}
 canvas{display:block;cursor:crosshair}
 #killfeed{position:absolute;top:10px;right:10px;pointer-events:none;display:flex;flex-direction:row;gap:8px;align-items:flex-start;max-height:calc(100% - 20px);overflow:clip}
-#feed-active{width:220px;display:flex;flex-direction:column;gap:4px;overflow:clip}
-#feed-passive{width:170px;display:flex;flex-direction:column;gap:4px;overflow:clip}
+#feed-active{width:280px;display:flex;flex-direction:column;gap:4px;overflow:clip}
+#feed-passive{width:200px;display:flex;flex-direction:column;gap:4px;overflow:clip}
 .kf-entry{background:rgba(13,17,23,0.88);border-left:3px solid #444;border-radius:0 5px 5px 0;padding:5px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;overflow:clip;max-width:100%}
 .kf-row1{display:flex;align-items:center;gap:6px;overflow:clip;max-width:100%}
 .kf-row2{font-size:10px;color:#8b949e;display:flex;gap:6px}
 .kf-ct{border-left-color:#4fc3f7}.kf-t{border-left-color:#ff9800}.kf-bomb{border-left-color:#ffd700}
-.kf-name-atk{font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;color:#adbac7;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
+.kf-name-atk{font-weight:700;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}.kf-name-vic{font-weight:700;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1;min-width:0}
 .kf-hs{color:#f85149;font-size:9px;background:#3d1a1a;border-radius:3px;padding:1px 3px}
 .kf-weapon{color:#8b949e;font-size:11px}
 .kf-dmg{color:#7ee787;font-size:10px;background:#0d2414;border-radius:3px;padding:1px 4px}
@@ -47,13 +47,15 @@ canvas{display:block;cursor:crosshair}
 #event-marks{position:relative;height:4px;overflow:hidden;border-radius:2px}
 .ev-mark{position:absolute;top:0;width:2px;height:100%;border-radius:1px;pointer-events:none;transform:translateX(-50%)}
 /* Stats panel */
-#stats-panel{width:260px;background:#161b22;border-left:1px solid #30363d;overflow-y:auto;flex-shrink:0;display:none;flex-direction:column}
-#stats-panel table{width:100%;border-collapse:collapse;font-size:11px}
-#stats-panel th{padding:6px 8px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;text-align:right}
-#stats-panel th:first-child{text-align:left}
-#stats-panel td{padding:5px 8px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
-#stats-panel td:first-child{text-align:left;max-width:120px;overflow:hidden;text-overflow:ellipsis}
-#stats-panel tr:hover td{background:rgba(255,255,255,0.04)}
+#stats-panel{width:340px;background:#161b22;border-left:1px solid #30363d;flex-shrink:0;display:none;flex-direction:column}
+.stats-side{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.stats-side-hdr{padding:4px 8px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #30363d}
+.stats-mini-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.stats-mini-tbl th{padding:4px 5px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;text-align:right}
+.stats-mini-tbl th:first-child{text-align:left}
+.stats-mini-tbl td{padding:4px 5px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
+.stats-mini-tbl td:first-child{text-align:left;max-width:90px;overflow:hidden;text-overflow:ellipsis}
+.stats-mini-tbl tr:hover td{background:rgba(255,255,255,0.04)}
 .stats-hdr{padding:8px 10px;font-size:11px;font-weight:600;color:#8b949e;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #30363d}
 </style>
 </head>
@@ -91,16 +93,23 @@ canvas{display:block;cursor:crosshair}
     <div id="tooltip"></div>
   </div>
   <div id="stats-panel">
-    <div class="stats-hdr">Match Stats</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Player</th>
-          <th>K</th><th>D</th><th>HS%</th><th id="stats-dmg-hdr">DMG</th>
-        </tr>
-      </thead>
-      <tbody id="stats-body"></tbody>
-    </table>
+    <div class="stats-hdr" id="stats-round-hdr">Round Stats</div>
+    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
+      <div class="stats-side">
+        <div class="stats-side-hdr" style="color:#4fc3f7">CT</div>
+        <table class="stats-mini-tbl">
+          <thead><tr><th>Player</th><th>K</th><th>D</th><th>DMG</th></tr></thead>
+          <tbody id="stats-ct-body"></tbody>
+        </table>
+      </div>
+      <div class="stats-side" style="border-left:1px solid #30363d">
+        <div class="stats-side-hdr" style="color:#ff9800">T</div>
+        <table class="stats-mini-tbl">
+          <thead><tr><th>Player</th><th>K</th><th>D</th><th>DMG</th></tr></thead>
+          <tbody id="stats-t-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 <div id="controls">
@@ -188,6 +197,7 @@ const TRAIL_COLORS = [
 ];
 
 const GREN_FEED_LABELS = ['Smoke', 'Flash', 'HE', 'Molotov', 'CT Smoke', 'T Smoke'];
+const NADE_FEED_COLORS = ['#aaa', '#e8e870', '#78e648', '#ff7820', '#50b4ff', '#ffaa32'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let roundIdx = 0;
@@ -703,21 +713,27 @@ function buildFeedEl(entry, round) {
   } else if (entry.type === 'nade') {
     const tr = entry.data;
     const label = GREN_FEED_LABELS[tr[TR_TYPE]] || 'Nade';
+    const nadeColor = NADE_FEED_COLORS[tr[TR_TYPE]] || '#aaa';
     const throwerName = tr[TR_THROWER] >= 0 ? (DEMO.players[tr[TR_THROWER]] || {}).name : null;
-    el.className = 'kf-entry kf-nade';
+    const throwerTeam = tr[TR_THROWER] >= 0 ? getPlayerTeam(round, tr[TR_ST], tr[TR_THROWER]) : null;
+    const throwerColor = throwerTeam === 'CT' ? CT_COLOR : T_COLOR;
+    el.className = 'kf-entry';
+    el.style.borderLeftColor = nadeColor;
     el.innerHTML =
       `<div class="kf-row1">` +
-      (throwerName ? `<span class="kf-name-atk">${esc(throwerName)}</span>` : '') +
-      `<span class="kf-weapon">${esc(label)}</span>` +
+      (throwerName ? `<span class="kf-name-atk" style="color:${throwerColor}">${esc(throwerName)}</span>` : '') +
+      `<span class="kf-weapon" style="color:${nadeColor}">${esc(label)}</span>` +
       `<span class="kf-time">${roundTimeFmt(round, tr[TR_ST])}</span>` +
       `</div>`;
   } else if (entry.type === 'hit') {
     const h = entry.data;
     const atkName = (DEMO.players[h[HI_ATK]] || {}).name || '?';
+    const atkTeamH = getPlayerTeam(round, h[HI_TICK], h[HI_ATK]);
+    const atkColorH = atkTeamH === 'CT' ? CT_COLOR : T_COLOR;
     el.className = 'kf-entry kf-hit';
     el.innerHTML =
       `<div class="kf-row1">` +
-      `<span class="kf-name-atk">${esc(atkName)}</span>` +
+      `<span class="kf-name-atk" style="color:${atkColorH}">${esc(atkName)}</span>` +
       `<span class="kf-weapon">${esc(h[HI_WEP])}</span>` +
       `<span class="kf-dmg">${h[HI_DMG]}</span>` +
       `</div>`;
@@ -726,12 +742,15 @@ function buildFeedEl(entry, round) {
     const atkName = (DEMO.players[k[K_ATK]] || {}).name || '?';
     const vicName = (DEMO.players[k[K_VIC]] || {}).name || '?';
     const atkTeam = getPlayerTeam(round, k[K_TICK], k[K_ATK]);
+    const vicTeam = getPlayerTeam(round, k[K_TICK], k[K_VIC]);
+    const atkColor = atkTeam === 'CT' ? CT_COLOR : T_COLOR;
+    const vicColor = vicTeam === 'CT' ? CT_COLOR : T_COLOR;
     el.className = 'kf-entry kf-' + atkTeam.toLowerCase();
     el.innerHTML =
       `<div class="kf-row1">` +
-      `<span class="kf-name-atk">${esc(atkName)}</span>` +
+      `<span class="kf-name-atk" style="color:${atkColor}">${esc(atkName)}</span>` +
       `<span class="kf-weapon">${esc(k[K_WEP])}</span>` +
-      `<span class="kf-name-vic">${esc(vicName)}</span>` +
+      `<span class="kf-name-vic" style="color:${vicColor}">${esc(vicName)}</span>` +
       (k[K_HS] ? '<span class="kf-hs">HS</span>' : '') +
       `<span class="kf-time">${roundTimeFmt(round, k[K_TICK])}</span>` +
       `</div>` +
@@ -848,20 +867,28 @@ function toggleStats() {
 
 function buildStatsTable() {
   const round = DEMO.rounds[roundIdx];
-  document.querySelector('.stats-hdr').textContent =
+  document.getElementById('stats-round-hdr').textContent =
     round ? 'Round ' + round.n + ' Stats' : 'Stats';
-  document.getElementById('stats-dmg-hdr').textContent = 'DMG';
 
-  const kills  = round ? (round.kills  || []) : [];
+  const kills   = round ? (round.kills || []) : [];
   const dmgList = round ? (round.dmg   || []) : [];
 
-  // Aggregate per-player stats for this round
-  const pm = {}; // idx → {k, d, hs, dmg}
-  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, hs:0, dmg:0}; };
+  // Get team assignments from first frame
+  const teamMap = {};
+  if (round && round.frames.length > 0) {
+    for (const ps of round.frames[0].p) {
+      teamMap[ps[PS_IDX]] = psTeam(ps);
+    }
+  }
+
+  // Aggregate per-player stats
+  const pm = {}; // idx → {k, d, dmg}
+  const ensure = idx => { if (!pm[idx]) pm[idx] = {k:0, d:0, dmg:0}; };
+  // Seed all known players so everyone appears even with 0 stats
+  for (const idx of Object.keys(teamMap)) ensure(+idx);
   for (const k of kills) {
     ensure(k[K_ATK]); ensure(k[K_VIC]);
     pm[k[K_ATK]].k++;
-    if (k[K_HS]) pm[k[K_ATK]].hs++;
     pm[k[K_VIC]].d++;
   }
   for (const [idx, dmg] of dmgList) {
@@ -869,23 +896,27 @@ function buildStatsTable() {
     pm[idx].dmg += dmg;
   }
 
-  const entries = Object.entries(pm)
-    .map(([idx, s]) => ({ idx: +idx, s, name: (DEMO.players[+idx] || {}).name || '?' }))
-    .sort((a, b) => b.s.k - a.s.k || b.s.dmg - a.s.dmg);
+  const fillBody = (tbodyId, side) => {
+    const entries = Object.entries(pm)
+      .filter(([idx]) => (teamMap[idx] || 'CT') === side)
+      .map(([idx, s]) => ({ idx: +idx, s, name: (DEMO.players[+idx] || {}).name || '?' }))
+      .sort((a, b) => b.s.k - a.s.k || b.s.dmg - a.s.dmg);
+    const tbody = document.getElementById(tbodyId);
+    tbody.innerHTML = '';
+    const nameColor = side === 'CT' ? CT_COLOR : T_COLOR;
+    for (const { s, name } of entries) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td title="${esc(name)}" style="color:${nameColor}">${esc(name)}</td>` +
+        `<td style="font-weight:600">${s.k}</td>` +
+        `<td>${s.d}</td>` +
+        `<td>${s.dmg}</td>`;
+      tbody.appendChild(tr);
+    }
+  };
 
-  const tbody = document.getElementById('stats-body');
-  tbody.innerHTML = '';
-  for (const { s, name } of entries) {
-    const hsPct = s.k > 0 ? Math.round(s.hs / s.k * 100) : 0;
-    const tr = document.createElement('tr');
-    tr.innerHTML =
-      `<td title="${esc(name)}">${esc(name)}</td>` +
-      `<td style="font-weight:600">${s.k}</td>` +
-      `<td>${s.d}</td>` +
-      `<td>${hsPct}%</td>` +
-      `<td>${s.dmg}</td>`;
-    tbody.appendChild(tr);
-  }
+  fillBody('stats-ct-body', 'CT');
+  fillBody('stats-t-body', 'T');
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────
@@ -930,6 +961,8 @@ function changeRound(delta) {
   roundIdx  = next;
   framePos  = 0;
   playing   = false;
+  document.getElementById('feed-active').innerHTML = '';
+  document.getElementById('feed-passive').innerHTML = '';
   lastActiveSig = ''; lastPassiveSig = '';
   updatePlayBtn();
   updateRoundLabel();
